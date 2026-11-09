@@ -4,110 +4,161 @@
 
 [![BTC donate](https://img.shields.io/badge/BTC-donate-f7931a.svg?logo=bitcoin)](https://www.blockchain.com/explorer/addresses/btc/bc1qmkv939k2wqsej657cxj25ppwqdh65y2umnv3gg)
 [![LTC donate](https://img.shields.io/badge/LTC-donate-a6a9aa.svg?logo=litecoin)](https://live.blockcypher.com/ltc/address/ltc1qjr49nr028mcajlt7prmmnqnjh0552qjj90zdq4)
-[![XMR donate](https://img.shields.io/badge/XMR-donate-FF6600.svg?logo=monero)](82oJRDdiSWWbem3HiYx7ZdDdiPkYQAW4LaGNHpNcJ9DCendQ3XcxHNYQiRMtfghYtSMmARPGqKe2ddSrhtjviTraEyGwgZ2)
+[![XMR donate](https://img.shields.io/badge/XMR-donate-FF6600.svg?logo=monero)](monero:82oJRDdiSWWbem3HiYx7ZdDdiPkYQAW4LaGNHpNcJ9DCendQ3XcxHNYQiRMtfghYtSMmARPGqKe2ddSrhtjviTraEyGwgZ2)
 
 ---
 
-## DISCLAIMER: This Plugin is still far from finished. It does not work yet, is not useable and might break your ASF Installation if used in this State
-
-## Contact
-
-For business-related questions, you can reach me at:
-
-- **Steam:** [steamcommunity.com/id/klb777](https://steamcommunity.com/id/klb777)
-- **Discord:** killerboyyy777
-
----
-
-## Description
-
-TradeManagerPlus is a plugin for **[ArchiSteamFarm](https://github.com/JustArchiNET/ArchiSteamFarm)** that enhances its trading capabilities. It allows you to define custom rules to automatically accept or decline trade offers based on the items involved.
-
----
+TradeManagerPlus is a plugin for **[ArchiSteamFarm](https://github.com/JustArchiNET/ArchiSteamFarm)** that lets you accept or decline incoming Steam trade offers with your own rules, based on the items in the offer.
 
 ## Features
 
-- **Custom Trade Rules**: Configure rules to automatically accept or decline trades based on item properties like AppID, type, and rarity.
-- **Test Command**: A simple `TEST` command to verify that the plugin is loaded and working correctly.
+- **Item-based rules**: match trades by AppID, item type, rarity and total item amount, separately for the items you receive and the items you give.
+- **Accept and Decline**: the first matching rule decides what happens to the offer.
+- **Safe by default**: if no rule matches, ASF handles the offer exactly as it would without the plugin.
+- **Validation**: malformed rules are reported in the ASF log and skipped instead of breaking the plugin.
+- **Inspection**: `TMP STATUS` and `TMP RULES` commands show the loaded configuration.
+- **Automatic updates**: the plugin uses ASF's GitHub plugin update mechanism.
 
----
+## How it interacts with ASF
+
+ASF calls this plugin only for trade offers that ASF itself is **not** willing to accept. That is a limitation of ASF's `IBotTradeOffer2` interface, not of this plugin:
+
+- An **Accept** rule can rescue an offer that ASF would otherwise ignore or reject.
+- A **Decline** rule explicitly declines an offer that ASF would otherwise leave untouched (ASF-declined offers are declined by ASF itself).
+- Offers that ASF accepts on its own (for example donations or items matching your `LootableTypes`) are **not** passed to the plugin and cannot be vetoed by it.
+
+If you need tighter control over all offers, combine this plugin with ASF's `TradingPreferences`, `LootableTypes` and `BotBehaviour` settings.
 
 ## Installation
 
 1. Download the latest release from the **[releases page](https://github.com/killerboyyy777/trademanagerplus/releases)**.
-2. Extract the `trademanagerplus` folder into your ASF `plugins` directory.
+2. Extract the archive into `plugins/TradeManagerPlus` inside your ASF directory, so that `TradeManagerPlus.dll` ends up in that folder.
 3. Restart ASF.
 
----
+The plugin requires ASF 6.3 or newer.
 
 ## Configuration
 
-You can configure the trade rules in your ASF bot config file (e.g., `MyBot.json`). The rules are defined within the `Plugins` configuration for `trademanagerplus`.
-
-### Example Configuration
-
-Here is an example of how to configure trade rules:
+Add a top-level `TradeManagerPlus` property to your bot config (for example `config/MyBot.json`), next to the other ASF properties:
 
 ```json
 {
-  "Plugins": {
-    "trademanagerplus": {
-      "TradeRules": [
-        {
-          "Type": "Accept",
-          "Conditions": {
-            "TheirItems": {
-              "AppIDs": [753],
-              "Types": ["Trading Card"]
-            },
-            "MyItems": {
-              "AppIDs": [753],
-              "Types": ["Trading Card"]
-            }
+  "Enabled": true,
+  "SteamLogin": "your_login",
+  "TradeManagerPlus": {
+    "Enabled": true,
+    "TradeRules": [
+      {
+        "Type": "Accept",
+        "Conditions": {
+          "TheirItems": {
+            "Types": ["TradingCard"],
+            "MinAmount": 1,
+            "MaxAmount": 1
           },
-          "ConditionLogic": "All",
-          "Description": "Accept any 1:1 trade for Steam trading cards."
+          "MyItems": {
+            "Types": ["TradingCard"],
+            "MinAmount": 1,
+            "MaxAmount": 1
+          }
         },
-        {
-          "Type": "Decline",
-          "Conditions": {
-            "MyItems": {
-              "Rarities": ["Rare"]
-            }
-          },
-          "ConditionLogic": "Any",
-          "Description": "Decline any trade where I'm giving away a rare item."
-        }
-      ]
-    }
+        "ConditionLogic": "All",
+        "Description": "Accept 1:1 Steam trading card swaps."
+      },
+      {
+        "Type": "Decline",
+        "Conditions": {
+          "MyItems": {
+            "Rarities": ["Rare", "Mythical", "Legendary", "Ancient", "Immortal", "Arcana", "Unusual"]
+          }
+        },
+        "Description": "Never give away rare or better items."
+      }
+    ]
   }
 }
 ```
 
-### Rule Properties
+> Older versions of this README used a `"Plugins": { "TradeManagerPlus": { ... } }` wrapper. That layout is still recognized for backwards compatibility, but ASF passes custom bot properties to plugins at the top level, as shown above.
 
-- **`Type`**: The action to take if the conditions are met. Can be `Accept` or `Decline`.
-- **`Conditions`**: A set of conditions that must be met for the rule to trigger.
-  - **`TheirItems`**: Conditions for the items you are receiving.
-  - **`MyItems`**: Conditions for the items you are giving.
-- **`ConditionLogic`**: How the conditions are evaluated.
-  - `All`: All specified conditions must be true.
-  - `Any`: At least one of the specified conditions must be true.
-- **`Description`**: An optional description of the rule.
+### Rule properties
 
-### Item Property Conditions
+| Property | Default | Description |
+| --- | --- | --- |
+| `Enabled` | `true` | Set to `false` to disable the plugin for this bot without deleting the rules. |
+| `TradeRules` | `[]` | Ordered list of rules. The first rule that matches wins. |
+| `TradeRules[].Type` | required | `Accept` or `Decline`. |
+| `TradeRules[].Conditions` | empty | Conditions for `TheirItems` (you receive) and `MyItems` (you give). |
+| `TradeRules[].ConditionLogic` | `All` | `All`: every item on that side must match the filters. `Any`: at least one item must match. |
+| `TradeRules[].Description` | empty | Free-form text shown in the ASF log and in `TMP RULES`. |
 
-Within `TheirItems` and `MyItems`, you can specify conditions based on the following item properties:
+### Item conditions
 
-- **`AppIDs`**: A list of App IDs. The item's App ID must match one of the specified IDs.
-- **`Types`**: A list of item types (e.g., "Trading Card", "Booster Pack", "Emoticon", "Profile Background").
-- **`Rarities`**: A list of item rarities (e.g., "Common", "Uncommon", "Rare").
+`TheirItems` and `MyItems` accept the same properties. Every property is optional; omitted properties do not restrict matching.
 
-The plugin will process the rules in the order they are defined. The first rule that matches a trade offer will be executed, and no further rules will be checked for that offer. If no rules match, ASF's default trade handling logic will be used.
+| Property | Description |
+| --- | --- |
+| `AppIDs` | List of real AppIDs the items must belong to, for example `[753]` for Steam inventory items. |
+| `Types` | List of item types. Matching is case-insensitive and ignores spaces, hyphens and underscores, so both `TradingCard` and `Trading Card` work. |
+| `Rarities` | List of item rarities, same lenient naming. |
+| `MinAmount` | Minimum total quantity of items on this side. `0` means no minimum. |
+| `MaxAmount` | Maximum total quantity of items on this side. Omit for no maximum. |
 
----
+**How a side is evaluated:**
+
+1. If the side has no properties at all, it matches anything, including an empty side.
+2. `MinAmount`/`MaxAmount` are checked against the total quantity of items on that side.
+3. If item filters (`AppIDs`, `Types`, `Rarities`) are present, `ConditionLogic` decides whether every item (`All`) or at least one item (`Any`) must satisfy all of them.
+
+A rule matches only when **both** `TheirItems` and `MyItems` match.
+
+### Item types
+
+`BoosterPack`, `Emoticon`, `FoilTradingCard`, `ProfileBackground`, `TradingCard`, `SteamGems`, `SaleItem`, `Consumable`, `ProfileModifier`, `Sticker`, `ChatEffect`, `MiniProfileBackground`, `AvatarProfileFrame`, `AnimatedAvatar`, `KeyboardSkin`, `StartupVideo`, `Unknown`.
+
+### Rarities
+
+`Common`, `Uncommon`, `Rare`, `Mythical` (`Epic`), `Legendary` (`Exotic`), `Ancient` (`Extraordinary`), `Immortal` (`Contraband`), `Arcana`, `Unusual`, `Unknown`.
+
+> Steam only exposes the full rarity information for some item types. Cards usually only have `Common`, `Uncommon` or `Rare`.
 
 ## Commands
 
-- **`TEST`**: Responds with `Test command executed!` to confirm the plugin is working.
-  - **Usage**: `!TEST <bot_name>`
+The commands require ASF `Master` access or higher and are scoped to the bot that receives them.
+
+| Command | Description |
+| --- | --- |
+| `!TMP` or `!TMP STATUS` | Show whether the plugin is enabled and how many rules are loaded. |
+| `!TMP RULES` | List the loaded rules (up to 10) with their conditions. |
+| `!TEST` | Alias of `!TMP STATUS`, kept for backwards compatibility. |
+
+Example: send `!TMP RULES` to the bot in Steam chat.
+
+## Logging
+
+Every accepted or declined offer that matched a rule is logged with the offer ID and the rule description. Invalid rules are logged as errors during bot initialization, including the reason and the list of valid types/rarities.
+
+## Building from source
+
+```sh
+git clone --recurse-submodules https://github.com/killerboyyy777/trademanagerplus.git
+cd trademanagerplus
+dotnet build -c Release
+```
+
+The plugin is copied to `ArchiSteamFarm/ArchiSteamFarm/bin/Release/net10.0/plugins/TradeManagerPlus/`. The `.NET 10 SDK` is required.
+
+Run the tests with:
+
+```sh
+dotnet test TradeManagerPlus.Tests/TradeManagerPlus.Tests.csproj -c Release
+```
+
+## Contact
+
+- **Steam:** [steamcommunity.com/id/klb777](https://steamcommunity.com/id/klb777)
+- **Discord:** killerboyyy777
+
+## License
+
+Apache-2.0. See [LICENSE.txt](LICENSE.txt).

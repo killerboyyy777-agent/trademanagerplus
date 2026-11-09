@@ -37,3 +37,6 @@ jobs:
 
     - name: Build ${{ matrix.configuration }}
       run: dotnet build -c "${{ matrix.configuration }}" -p:ContinuousIntegrationBuild=true -p:UseAppHost=false --nologo
+
+    - name: Test
+      run: dotnet test TradeManagerPlus.Tests/TradeManagerPlus.Tests.csproj -c "${{ matrix.configuration }}" --no-build --nologo
