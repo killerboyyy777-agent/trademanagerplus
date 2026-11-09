@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.Helpers.Json;
@@ -14,6 +15,16 @@ using ArchiSteamFarm.Steam.Exchange;
 using ArchiSteamFarm.Steam.Storage;
 using JetBrains.Annotations;
 
+#if ASF7
+using BotUserAccess = ArchiSteamFarm.Steam.EBotUserAccess;
+using TradeBehaviour = ArchiSteamFarm.Steam.Storage.EBotBehaviour;
+using TradeResult = ArchiSteamFarm.Steam.Exchange.ETradeResult;
+#else
+using BotUserAccess = ArchiSteamFarm.Steam.EAccess;
+using TradeBehaviour = ArchiSteamFarm.Steam.Storage.BotConfig.EBotBehaviour;
+using TradeResult = ArchiSteamFarm.Steam.Exchange.ParseTradeResult.EResult;
+#endif
+
 namespace TradeManagerPlus;
 
 internal sealed class BotRuleSet {
@@ -23,7 +34,11 @@ internal sealed class BotRuleSet {
 
 #pragma warning disable CA1812 // ASF instantiates this class during runtime
 [UsedImplicitly]
+#if ASF7
+internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotCommand, IBotModules, IBotTradeOffer {
+#else
 internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotCommand2, IBotModules, IBotTradeOffer2 {
+#endif
 	private const string PluginName = "TradeManagerPlus";
 	private const string Repository = "killerboyyy777/trademanagerplus";
 	private const int MaxRulesShownInCommand = 10;
@@ -36,13 +51,21 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 
 	public Version Version => typeof(TradeManagerPlusPlugin).Assembly.GetName().Version ?? throw new InvalidOperationException(nameof(Version));
 
+#if ASF7
+	public Task OnLoaded(CancellationToken cancellationToken = default) {
+#else
 	public Task OnLoaded() {
+#endif
 		ASF.ArchiLogger.LogGenericInfo($"{PluginName} v{Version} loaded. Configure rules in the '{PluginName}' section of your bot config.");
 
 		return Task.CompletedTask;
 	}
 
+#if ASF7
+	public Task OnBotInit(Bot bot, CancellationToken cancellationToken = default) {
+#else
 	public Task OnBotInit(Bot bot) {
+#endif
 		ArgumentNullException.ThrowIfNull(bot);
 
 		BotRules.TryRemove(bot.BotName, out _);
@@ -50,7 +73,11 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 		return Task.CompletedTask;
 	}
 
+#if ASF7
+	public Task OnBotDestroy(Bot bot, CancellationToken cancellationToken = default) {
+#else
 	public Task OnBotDestroy(Bot bot) {
+#endif
 		ArgumentNullException.ThrowIfNull(bot);
 
 		BotRules.TryRemove(bot.BotName, out _);
@@ -58,7 +85,11 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 		return Task.CompletedTask;
 	}
 
+#if ASF7
+	public Task OnBotInitModules(Bot bot, IReadOnlyDictionary<string, JsonElement>? additionalConfigProperties = null, CancellationToken cancellationToken = default) {
+#else
 	public Task OnBotInitModules(Bot bot, IReadOnlyDictionary<string, JsonElement>? additionalConfigProperties = null) {
+#endif
 		ArgumentNullException.ThrowIfNull(bot);
 
 		JsonElement? configElement = GetPluginConfigElement(additionalConfigProperties);
@@ -125,7 +156,11 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 		return Task.CompletedTask;
 	}
 
-	public Task<string?> OnBotCommand(Bot bot, EAccess access, string message, string[] args, ulong steamID = 0) {
+#if ASF7
+	public Task<string?> OnBotCommand(Bot bot, BotUserAccess access, string message, string[] args, ulong steamID = 0, CancellationToken cancellationToken = default) {
+#else
+	public Task<string?> OnBotCommand(Bot bot, BotUserAccess access, string message, string[] args, ulong steamID = 0) {
+#endif
 		ArgumentNullException.ThrowIfNull(bot);
 
 		if ((args == null) || (args.Length == 0)) {
@@ -138,8 +173,8 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 			return Task.FromResult<string?>(null);
 		}
 
-		if (access < EAccess.Master) {
-			return Task.FromResult(access > EAccess.None ? bot.Commands.FormatBotResponse("Access denied.") : null);
+		if (access < BotUserAccess.Master) {
+			return Task.FromResult(access > BotUserAccess.None ? bot.Commands.FormatBotResponse("Access denied.") : null);
 		}
 
 		string subcommand = args.Length > 1 ? args[1].ToUpperInvariant() : "STATUS";
@@ -155,11 +190,22 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 		return Task.FromResult<string?>(bot.Commands.FormatBotResponse(response));
 	}
 
-	public async Task<bool> OnBotTradeOffer(Bot bot, TradeOffer tradeOffer, ParseTradeResult.EResult asfResult) {
+#if ASF7
+	public async Task<bool> OnBotTradeOffer(Bot bot, TradeOffer tradeOffer, TradeResult asfResult, CancellationToken cancellationToken = default) {
+#else
+	public async Task<bool> OnBotTradeOffer(Bot bot, TradeOffer tradeOffer, TradeResult asfResult) {
+#endif
 		ArgumentNullException.ThrowIfNull(bot);
 		ArgumentNullException.ThrowIfNull(tradeOffer);
 
 		if (!BotRules.TryGetValue(bot.BotName, out BotRuleSet? ruleSet) || !ruleSet.Enabled || (ruleSet.Rules.Count == 0)) {
+			return false;
+		}
+
+		// ASF blacklists trades from untrusted bots and bad actors for a reason. Never override that decision.
+		if (asfResult == TradeResult.Blacklisted) {
+			bot.ArchiLogger.LogGenericWarning($"[{PluginName}] Not accepting blacklisted trade offer {tradeOffer.TradeOfferID}; ASF will decline it.");
+
 			return false;
 		}
 
@@ -187,7 +233,11 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 
 					bot.ArchiLogger.LogGenericInfo($"[{PluginName}] Declining trade offer {tradeOffer.TradeOfferID} due to rule \"{description}\".");
 
+#if ASF7
+					if (!await bot.ArchiWebHandler.DeclineTradeOffer(tradeOffer.TradeOfferID, cancellationToken).ConfigureAwait(false)) {
+#else
 					if (!await bot.ArchiWebHandler.DeclineTradeOffer(tradeOffer.TradeOfferID).ConfigureAwait(false)) {
+#endif
 						bot.ArchiLogger.LogGenericWarning($"[{PluginName}] Failed to decline trade offer {tradeOffer.TradeOfferID}.");
 					}
 
@@ -200,9 +250,9 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 		return false;
 	}
 
-	private static bool AsfWillDeclineOffer(Bot bot, ParseTradeResult.EResult asfResult) => asfResult switch {
-		ParseTradeResult.EResult.Blacklisted => true,
-		ParseTradeResult.EResult.Rejected => bot.BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.RejectInvalidTrades),
+	private static bool AsfWillDeclineOffer(Bot bot, TradeResult asfResult) => asfResult switch {
+		TradeResult.Blacklisted => true,
+		TradeResult.Rejected => bot.BotConfig.BotBehaviour.HasFlag(TradeBehaviour.RejectInvalidTrades),
 		_ => false
 	};
 

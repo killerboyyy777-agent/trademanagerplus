@@ -10,6 +10,9 @@
 
 TradeManagerPlus is a plugin for **[ArchiSteamFarm](https://github.com/JustArchiNET/ArchiSteamFarm)** that lets you accept or decline incoming Steam trade offers with your own rules, based on the items in the offer.
 
+> [!WARNING]
+> **Beta / test build, not finished.** The current releases are early builds for testing. They have not been validated against live Steam trades, and the ASF 7 build depends on a pre-release ASF version. Do not use them on a bot that holds items you cannot afford to lose. The ASF 6 build is the more tested one.
+
 ## Features
 
 - **Item-based rules**: match trades by AppID, item type, rarity and total item amount, separately for the items you receive and the items you give.
@@ -17,13 +20,13 @@ TradeManagerPlus is a plugin for **[ArchiSteamFarm](https://github.com/JustArchi
 - **Safe by default**: if no rule matches, ASF handles the offer exactly as it would without the plugin.
 - **Validation**: malformed rules are reported in the ASF log and skipped instead of breaking the plugin.
 - **Inspection**: `TMP STATUS` and `TMP RULES` commands show the loaded configuration.
-- **Automatic updates**: the plugin uses ASF's GitHub plugin update mechanism.
+- **Automatic updates**: the plugin uses ASF's GitHub plugin update mechanism. Beta releases are intentionally published as pre-releases, so ASF does not offer them through the automatic update channel.
 
 ## How it interacts with ASF
 
-ASF calls this plugin only for trade offers that ASF itself is **not** willing to accept. That is a limitation of ASF's `IBotTradeOffer2` interface, not of this plugin:
+ASF calls this plugin only for trade offers that ASF itself is **not** willing to accept. That is a limitation of ASF's trade-offer interface (`IBotTradeOffer2` on ASF 6, `IBotTradeOffer` on ASF 7), not of this plugin:
 
-- An **Accept** rule can rescue an offer that ASF would otherwise ignore or reject.
+- An **Accept** rule can rescue an offer that ASF would otherwise ignore or reject. Blacklisted offers are the exception: the plugin never overrides ASF's blacklist, and ASF declines those offers.
 - A **Decline** rule explicitly declines an offer that ASF would otherwise leave untouched (ASF-declined offers are declined by ASF itself).
 - Offers that ASF accepts on its own (for example donations or items matching your `LootableTypes`) are **not** passed to the plugin and cannot be vetoed by it.
 
@@ -31,11 +34,15 @@ If you need tighter control over all offers, combine this plugin with ASF's `Tra
 
 ## Installation
 
-1. Download the latest release from the **[releases page](https://github.com/killerboyyy777/trademanagerplus/releases)**.
+1. Download the release asset that matches your ASF version from the **[beta releases page](https://github.com/killerboyyy777-agent/trademanagerplus/releases)**:
+   - ASF 6.3.11.7: `TradeManagerPlus.zip`
+   - ASF 7.0.0.7: `TradeManagerPlus-V7.zip`
 2. Extract the archive into `plugins/TradeManagerPlus` inside your ASF directory, so that `TradeManagerPlus.dll` ends up in that folder.
 3. Restart ASF.
 
-The plugin requires ASF 6.3 or newer.
+The ASF 6 asset requires ASF 6.3.11.7 and .NET 10. The ASF 7 asset requires the ASF 7 pre-release (7.0.0.7) and .NET 11. ASF 7 support may change before ASF 7 goes stable.
+
+> Beta releases are published from the fork for testing and are not offered through ASF's automatic update channel. Stable releases will be published on the [main releases page](https://github.com/killerboyyy777/trademanagerplus/releases) once they are ready.
 
 ## Configuration
 
@@ -140,19 +147,34 @@ Every accepted or declined offer that matched a rule is logged with the offer ID
 
 ## Building from source
 
+ASF 6 (default, .NET 10 SDK):
+
 ```sh
 git clone --recurse-submodules https://github.com/killerboyyy777/trademanagerplus.git
 cd trademanagerplus
 dotnet build -c Release
 ```
 
-The plugin is copied to `ArchiSteamFarm/ArchiSteamFarm/bin/Release/net10.0/plugins/TradeManagerPlus/`. The `.NET 10 SDK` is required.
+The plugin is copied to `ArchiSteamFarm/ArchiSteamFarm/bin/Release/net10.0/plugins/TradeManagerPlus/`.
+
+ASF 7 (.NET 11 SDK):
+
+```sh
+git -C ArchiSteamFarm fetch origin tag 7.0.0.7 --no-tags
+git -C ArchiSteamFarm checkout 7.0.0.7
+git -C ArchiSteamFarm submodule update --init --recursive
+dotnet build -c Release -p:AsfMajor=7
+```
+
+The plugin is copied to `ArchiSteamFarm/ArchiSteamFarm/bin/Release/net11.0/plugins/TradeManagerPlus/`. To return to the pinned ASF 6 version, run `git submodule update --init --recursive` from the repository root.
 
 Run the tests with:
 
 ```sh
 dotnet test TradeManagerPlus.Tests/TradeManagerPlus.Tests.csproj -c Release
 ```
+
+For ASF 7, add `-p:AsfMajor=7` to the test command as well.
 
 ## Contact
 

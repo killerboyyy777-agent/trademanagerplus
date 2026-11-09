@@ -3,6 +3,10 @@
 		<OutputType>Library</OutputType>
 	</PropertyGroup>
 
+	<PropertyGroup Condition="'$(AsfMajor)' == '7'">
+		<DefineConstants>$(DefineConstants);ASF7</DefineConstants>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<PackageReference Include="JetBrains.Annotations.Sources" PrivateAssets="all" />
 		<PackageReference Include="Microsoft.AspNetCore.OpenApi" IncludeAssets="compile" />
