@@ -9,11 +9,29 @@ namespace TradeManagerPlus;
 ///     Pure matching logic, intentionally free of ASF runtime objects so that it can be unit-tested.
 /// </summary>
 internal static class TradeMatcher {
-	internal static bool IsMatch(CompiledTradeRule rule, IReadOnlyCollection<Asset> itemsToReceive, IReadOnlyCollection<Asset> itemsToGive, IReadOnlyDictionary<uint, byte>? cardSetSizes = null, Func<Asset, ulong?>? gooValue = null, Func<Asset, MarketQuote?>? marketPrice = null) =>
+	internal static bool IsMatch(CompiledTradeRule rule, IReadOnlyCollection<Asset> itemsToReceive, IReadOnlyCollection<Asset> itemsToGive, IReadOnlyDictionary<uint, byte>? cardSetSizes = null, Func<Asset, ulong?>? gooValue = null, Func<Asset, MarketQuote?>? marketPrice = null, byte? tradeHoldDays = null) =>
 		IsSideMatch(rule.TheirItems, itemsToReceive, rule.Logic, cardSetSizes)
 		&& IsSideMatch(rule.MyItems, itemsToGive, rule.Logic, cardSetSizes)
 		&& IsValueSatisfied(rule, itemsToReceive, itemsToGive, cardSetSizes, gooValue)
-		&& IsMarketProfitSatisfied(rule, itemsToReceive, itemsToGive, marketPrice);
+		&& IsMarketProfitSatisfied(rule, itemsToReceive, itemsToGive, marketPrice)
+		&& IsTradeHoldSatisfied(rule, tradeHoldDays);
+
+	/// <summary>
+	///     True when the rule restricts the trade hold, in which case the caller has to resolve it for the offer.
+	/// </summary>
+	internal static bool NeedsTradeHold(CompiledTradeRule rule) => rule.HasTradeHoldRequirement;
+
+	/// <summary>
+	///     Checks the hold period of the trade against the rule. An unknown hold never matches a rule that asks for one,
+	///     because a missing value is not the same as no hold.
+	/// </summary>
+	private static bool IsTradeHoldSatisfied(CompiledTradeRule rule, byte? tradeHoldDays) {
+		if (!rule.HasTradeHoldRequirement) {
+			return true;
+		}
+
+		return tradeHoldDays.HasValue && (tradeHoldDays.Value >= rule.TradeHoldMinDays) && (tradeHoldDays.Value <= rule.TradeHoldMaxDays);
+	}
 
 	/// <summary>
 	///     True when matching the rule requires Steam Community market prices, which the caller has to prefetch.

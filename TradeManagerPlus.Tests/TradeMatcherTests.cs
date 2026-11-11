@@ -199,7 +199,7 @@ public sealed class TradeMatcherTests {
 			"""
 			{
 				"Type": "Accept",
-				"Conditions": { "TheirItems": { "Rarities": ["Epic"] } }
+				"Conditions": { "TheirItems": { "CustomRarities": ["Epic"] } }
 			}
 			"""
 		);
@@ -900,7 +900,7 @@ public sealed class TradeMatcherTests {
 	[TestMethod]
 	public void InvalidMarketCurrencyIsRejected() => AssertCompileFails(
 		"""{ "Type": "Accept", "MarketProfit": { "MinProfit": 1, "Currency": 0 } }""",
-		"'MarketProfit.Currency' must be greater than zero"
+		"'MarketProfit.Currency' contains unknown currency"
 	);
 
 	[TestMethod]
@@ -1274,6 +1274,107 @@ public sealed class TradeMatcherTests {
 		}
 		"""
 	));
+
+	private const string NoHoldTradeJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": { "Types": ["Trading Card"] },
+				"MyItems": { "Types": ["Trading Card"] }
+			},
+			"TradeHold": { "MaxDays": 0 },
+			"Description": "Cards for cards without a trade hold."
+		}
+		""";
+
+	[TestMethod]
+	public void WalletCurrencyFollowsTheBotWallet() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "Currency": "Wallet", "MinProfit": 1 } }""");
+
+		Assert.IsTrue(rule.MarketCurrencyFollowsWallet);
+	}
+
+	[TestMethod]
+	public void CurrencyAcceptsNumbersAndNumericStrings() {
+		CompiledTradeRule numberRule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "Currency": 3, "MinProfit": 1 } }""");
+		CompiledTradeRule textRule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "Currency": "3", "MinProfit": 1 } }""");
+
+		Assert.AreEqual(3, numberRule.MarketCurrency);
+		Assert.AreEqual(3, textRule.MarketCurrency);
+		Assert.IsFalse(numberRule.MarketCurrencyFollowsWallet);
+	}
+
+	[TestMethod]
+	public void UnknownCurrencyIsRejected() {
+		AssertCompileFails("""{ "Type": "Accept", "MarketProfit": { "Currency": "Euro", "MinProfit": 1 } }""", "unknown currency");
+	}
+
+	[TestMethod]
+	public void ZeroCurrencyIsRejected() {
+		AssertCompileFails("""{ "Type": "Accept", "MarketProfit": { "Currency": 0, "MinProfit": 1 } }""", "unknown currency");
+	}
+
+	[TestMethod]
+	public void CommunityRarityMatchesSteamCommunityItems() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "Conditions": { "TheirItems": { "Rarities": ["Rare"] } } }""");
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [CreateAsset(EAssetType.TradingCard, EAssetRarity.Rare)], []));
+	}
+
+	[TestMethod]
+	public void NonCommunityRarityNeedsTheCustomList() {
+		AssertCompileFails("""{ "Type": "Accept", "Conditions": { "TheirItems": { "Rarities": ["Ancient"] } } }""", "not a Steam Community item rarity");
+	}
+
+	[TestMethod]
+	public void CustomRarityMatchesItemsFromOtherInventories() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "Conditions": { "MyItems": { "CustomRarities": ["Ancient"] } } }""");
+
+		// ASF can only build test assets with a Steam Community rarity, so the custom tier is verified on the compiled
+		// condition and the rejection on a real item.
+		Assert.Contains(EAssetRarity.Ancient, rule.MyItems[0].Rarities);
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [], [CreateAsset(EAssetType.Unknown, EAssetRarity.Rare, realAppID: 730)]));
+	}
+
+	[TestMethod]
+	public void TradeHoldRangeIsRespected() {
+		CompiledTradeRule rule = CompileSingle(NoHoldTradeJson);
+		Asset card = CreateAsset(EAssetType.TradingCard);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [card], [card], tradeHoldDays: 0));
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [card], [card], tradeHoldDays: 1));
+	}
+
+	[TestMethod]
+	public void UnknownTradeHoldDoesNotMatchARestrictedRule() {
+		CompiledTradeRule rule = CompileSingle(NoHoldTradeJson);
+		Asset card = CreateAsset(EAssetType.TradingCard);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [card], [card]));
+	}
+
+	[TestMethod]
+	public void MinimumTradeHoldAcceptsLongerHolds() {
+		CompiledTradeRule rule = CompileSingle("""
+			{
+				"Type": "Accept",
+				"Conditions": { "TheirItems": { "Types": ["Trading Card"] }, "MyItems": { "Types": ["Trading Card"] } },
+				"TradeHold": { "MinDays": 1, "MaxDays": 3 }
+			}
+			""");
+		Asset card = CreateAsset(EAssetType.TradingCard);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [card], [card], tradeHoldDays: 2));
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [card], [card], tradeHoldDays: 0));
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [card], [card], tradeHoldDays: 4));
+	}
+
+	[TestMethod]
+	public void ImpossibleTradeHoldWindowIsRejected() {
+		AssertCompileFails("""{ "Type": "Accept", "TradeHold": { "MinDays": 5, "MaxDays": 2 } }""", "is greater than");
+		AssertCompileFails("""{ "Type": "Accept", "TradeHold": { "MaxDays": 30 } }""", "must not be greater than 15");
+	}
 
 	private static void AssertCompileFails(string ruleJson, string expectedErrorFragment) {
 		PluginConfig config = ParseConfig(ruleJson);

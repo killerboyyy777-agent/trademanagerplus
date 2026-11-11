@@ -197,6 +197,12 @@ internal sealed class CompiledTradeRule {
 	public int MarketCurrency { get; init; } = 1;
 
 	/// <summary>
+	///     True when the market prices are compared in the currency of the bot's own Steam wallet instead of
+	///     <see cref="MarketCurrency" />.
+	/// </summary>
+	public bool MarketCurrencyFollowsWallet { get; init; }
+
+	/// <summary>
 	///     Units sold in the last 24 hours before a market price is trusted.
 	/// </summary>
 	public uint MarketMinVolume { get; init; } = 10;
@@ -205,6 +211,21 @@ internal sealed class CompiledTradeRule {
 	///     Highest trusted market price per unit, or <c>0</c> when any price is trusted.
 	/// </summary>
 	public decimal MarketMaxUnitPrice { get; init; }
+
+	/// <summary>
+	///     Smallest trade hold in days this rule accepts.
+	/// </summary>
+	public uint TradeHoldMinDays { get; init; }
+
+	/// <summary>
+	///     Largest trade hold in days this rule accepts.
+	/// </summary>
+	public uint TradeHoldMaxDays { get; init; } = 15;
+
+	/// <summary>
+	///     True when the rule restricts the trade hold, in which case an unknown hold never matches.
+	/// </summary>
+	internal bool HasTradeHoldRequirement { get; init; }
 
 	/// <summary>
 	///     True when the rule requires the trade to be profitable on the Steam Community market.
@@ -517,6 +538,24 @@ internal static class RuleCompiler {
 			}
 		}
 
+		uint tradeHoldMinDays = config.TradeHold?.MinDays ?? 0;
+		uint tradeHoldMaxDays = config.TradeHold?.MaxDays ?? 15;
+		bool hasTradeHoldRequirement = (config.TradeHold?.MinDays != null) || (config.TradeHold?.MaxDays != null);
+
+		if (hasTradeHoldRequirement) {
+			if (tradeHoldMaxDays > 15) {
+				error = $"'TradeHold.MaxDays' must not be greater than 15, but is {tradeHoldMaxDays}";
+
+				return false;
+			}
+
+			if (tradeHoldMinDays > tradeHoldMaxDays) {
+				error = $"'TradeHold.MinDays' ({tradeHoldMinDays}) is greater than 'TradeHold.MaxDays' ({tradeHoldMaxDays})";
+
+				return false;
+			}
+		}
+
 		decimal marketMinProfit = config.MarketProfit?.MinProfit ?? 0;
 		decimal marketMinProfitPercent = config.MarketProfit?.MinProfitPercent ?? 0;
 
@@ -547,10 +586,8 @@ internal static class RuleCompiler {
 			return false;
 		}
 
-		int marketCurrency = config.MarketProfit?.Currency ?? 1;
-
-		if (marketCurrency <= 0) {
-			error = $"'MarketProfit.Currency' must be greater than zero, but is {marketCurrency}";
+		if (!MarketCurrency.TryParse(config.MarketProfit?.Currency, out int marketCurrency, out bool marketCurrencyFollowsWallet, out string? currencyError)) {
+			error = currencyError;
 
 			return false;
 		}
@@ -584,8 +621,12 @@ internal static class RuleCompiler {
 			MarketMinProfit = marketMinProfit,
 			MarketMinProfitPercent = marketMinProfitPercent,
 			MarketCurrency = marketCurrency,
+			MarketCurrencyFollowsWallet = marketCurrencyFollowsWallet,
 			MarketMinVolume = marketMinVolume,
-			MarketMaxUnitPrice = marketMaxUnitPrice
+			MarketMaxUnitPrice = marketMaxUnitPrice,
+			TradeHoldMinDays = tradeHoldMinDays,
+			TradeHoldMaxDays = tradeHoldMaxDays,
+			HasTradeHoldRequirement = hasTradeHoldRequirement
 		};
 
 		return true;
@@ -688,8 +729,20 @@ internal static class RuleCompiler {
 
 		if (config.Rarities != null) {
 			foreach (string rarityName in config.Rarities) {
-				if (!EnumNameParser.TryParseAssetRarity(rarityName, out EAssetRarity rarity)) {
-					error = $"'{path}.Rarities' contains unknown item rarity '{rarityName}'. Valid values: {EnumNameParser.AssetRarityNames}";
+				if (!EnumNameParser.TryParseCommunityRarity(rarityName, out EAssetRarity rarity)) {
+					error = $"'{path}.Rarities' contains '{rarityName}', which is not a Steam Community item rarity. Valid values: {EnumNameParser.CommunityRarityNames}. Use 'CustomRarities' for tiers that belong to other inventories.";
+
+					return null;
+				}
+
+				result.Rarities.Add(rarity);
+			}
+		}
+
+		if (config.CustomRarities != null) {
+			foreach (string rarityName in config.CustomRarities) {
+				if (!EnumNameParser.TryParseCustomRarity(rarityName, out EAssetRarity rarity)) {
+					error = $"'{path}.CustomRarities' contains unknown item rarity '{rarityName}'. Valid values: {EnumNameParser.CustomRarityNames}";
 
 					return null;
 				}
@@ -733,6 +786,20 @@ internal static class RuleCompiler {
 internal static class EnumNameParser {
 	internal static readonly string AssetTypeNames = string.Join(", ", Enum.GetNames<EAssetType>());
 	internal static readonly string AssetRarityNames = string.Join(", ", Enum.GetNames<EAssetRarity>());
+	internal const string CommunityRarityNames = "Common, Uncommon, Rare";
+	internal const string CustomRarityNames = "Mythical, Legendary, Ancient, Immortal, Arcana, Unusual";
+
+	internal static bool TryParseCommunityRarity(string? value, out EAssetRarity result) {
+		result = default;
+
+		return TryParseAssetRarity(value, out result) && (result is EAssetRarity.Common or EAssetRarity.Uncommon or EAssetRarity.Rare);
+	}
+
+	internal static bool TryParseCustomRarity(string? value, out EAssetRarity result) {
+		result = default;
+
+		return TryParseAssetRarity(value, out result) && (result is not (EAssetRarity.Common or EAssetRarity.Uncommon or EAssetRarity.Rare));
+	}
 
 	internal static bool TryParseAssetType(string? value, out EAssetType result) => TryParse(value, out result);
 

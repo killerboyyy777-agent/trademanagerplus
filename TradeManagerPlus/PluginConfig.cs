@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -94,16 +95,25 @@ internal sealed class TradeRuleConfig {
 	/// </summary>
 	[JsonPropertyName("MarketProfit")]
 	public MarketProfitConfig? MarketProfit { get; init; }
+
+	/// <summary>
+	///     Restricts the rule to trades whose items are held by Steam for a number of days. Omit it to accept any hold
+	///     period. When Steam does not report the hold of an offer, a rule that sets this never matches.
+	/// </summary>
+	[JsonPropertyName("TradeHold")]
+	public TradeHoldConfig? TradeHold { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class MarketProfitConfig {
 	/// <summary>
-	///     Steam currency ID used for the price lookups, for example <c>1</c> for USD, <c>2</c> for GBP or <c>3</c> for
-	///     EUR. Defaults to <c>1</c>.
+	///     Currency used for the price lookups. Accepts a Steam currency ID such as <c>1</c> for USD, <c>2</c> for GBP
+	///     or <c>3</c> for EUR, or <c>Wallet</c> to follow the currency of the bot's own Steam wallet, which is what the
+	///     account is actually charged in. Defaults to <c>1</c> (USD).
 	/// </summary>
+	[JsonConverter(typeof(CurrencyConverter))]
 	[JsonPropertyName("Currency")]
-	public int? Currency { get; init; }
+	public string? Currency { get; init; }
 
 	/// <summary>
 	///     Minimum profit in that currency that the trade has to be worth, for example <c>0.05</c>. Leave out for no flat
@@ -274,10 +284,21 @@ internal sealed class ItemConditionsConfig {
 	public IReadOnlyList<string>? Types { get; init; }
 
 	/// <summary>
-	///     Allowed item rarities, for example <c>Rare</c> or <c>Common</c>.
+	///     Allowed rarities of Steam Community items. Only the rarities that Steam Community items actually use are
+	///     accepted here: <c>Common</c>, <c>Uncommon</c> and <c>Rare</c>. Use <see cref="CustomRarities" /> for the tiers
+	///     that belong to other inventories, such as TF2 or CS.
 	/// </summary>
 	[JsonPropertyName("Rarities")]
 	public IReadOnlyList<string>? Rarities { get; init; }
+
+	/// <summary>
+	///     Additional rarities to allow, for inventories that define their own tiers. Accepts <c>Mythical</c>,
+	///     <c>Legendary</c>, <c>Ancient</c>, <c>Immortal</c>, <c>Arcana</c> and <c>Unusual</c>, together with their
+	///     Steam aliases <c>Epic</c>, <c>Exotic</c>, <c>Extraordinary</c> and <c>Contraband</c>. Leave it out unless the
+	///     items you trade come from a game that marks its items with one of those tiers.
+	/// </summary>
+	[JsonPropertyName("CustomRarities")]
+	public IReadOnlyList<string>? CustomRarities { get; init; }
 
 	/// <summary>
 	///     Real AppIDs that must never appear on this side, for example <c>[730]</c> to refuse CS items. When the side is
@@ -313,6 +334,25 @@ internal sealed class ItemConditionsConfig {
 	/// </summary>
 	[JsonPropertyName("MaxAmount")]
 	public uint? MaxAmount { get; init; }
+}
+
+/// <summary>
+///     Restricts a rule to a range of trade hold (escrow) days. Steam holds new trades for up to 15 days when the
+///     account has no mobile authenticator, and never holds a trade between two accounts that both have one.
+/// </summary>
+internal sealed class TradeHoldConfig {
+	/// <summary>
+	///     Smallest number of held days the rule accepts. Defaults to 0, which includes trades that are not held at all.
+	/// </summary>
+	[JsonPropertyName("MinDays")]
+	public uint? MinDays { get; init; }
+
+	/// <summary>
+	///     Largest number of held days the rule accepts. Defaults to 15, which is Steam's maximum. Set it to 0 to only
+	///     accept trades that are not held.
+	/// </summary>
+	[JsonPropertyName("MaxDays")]
+	public uint? MaxDays { get; init; }
 }
 
 /// <summary>
@@ -352,6 +392,20 @@ internal sealed class SingleOrArrayConverter<T> : JsonConverter<IReadOnlyList<T>
 
 		JsonSerializer.Serialize(writer, value.ToList(), options);
 	}
+}
+
+/// <summary>
+///     Reads a currency setting that may be written as a JSON number (<c>1</c>) or as a string (<c>"1"</c>,
+///     <c>"Wallet"</c>).
+/// </summary>
+internal sealed class CurrencyConverter : JsonConverter<string> {
+	public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => reader.TokenType switch {
+		JsonTokenType.String => reader.GetString() ?? string.Empty,
+		JsonTokenType.Number when reader.TryGetInt32(out int currency) => currency.ToString(CultureInfo.InvariantCulture),
+		_ => throw new JsonException("'Currency' must be a Steam currency ID or the string 'Wallet'.")
+	};
+
+	public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) => writer.WriteStringValue(value);
 }
 
 #pragma warning restore CA1812 // ASF uses these classes during runtime through JSON deserialization

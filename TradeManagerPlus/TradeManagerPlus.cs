@@ -261,13 +261,15 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 #endif
 		}
 
-		// Market prices are only read when a rule asks for them, in the currency that rule wants.
+		// Market prices are only read when a rule asks for them, in the currency that rule wants. A rule configured with
+		// 'Currency: "Wallet"' follows the currency of the bot's own Steam wallet instead of a fixed currency ID.
+		int[] ruleCurrencies = [.. ruleSet.Rules.Select(rule => ResolveMarketCurrency(bot, rule))];
 		Dictionary<int, Func<Asset, MarketQuote?>?> marketPrices = [];
 
 		if (ruleSet.Rules.Any(static rule => TradeMatcher.NeedsMarketPrices(rule))) {
 			Asset[] candidates = [.. itemsToReceive.Concat(itemsToGive)];
 
-			foreach (int currency in ruleSet.Rules.Where(static rule => TradeMatcher.NeedsMarketPrices(rule)).Select(static rule => rule.MarketCurrency).Distinct()) {
+			foreach (int currency in ruleCurrencies.Where(static currency => currency > 0).Distinct()) {
 				if (marketPrices.ContainsKey(currency)) {
 					continue;
 				}
@@ -280,10 +282,23 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 			}
 		}
 
-		foreach (CompiledTradeRule rule in ruleSet.Rules) {
-			Func<Asset, MarketQuote?>? marketPrice = rule.HasMarketRequirement && marketPrices.TryGetValue(rule.MarketCurrency, out Func<Asset, MarketQuote?>? resolvedMarketPrice) ? resolvedMarketPrice : null;
+		byte? tradeHoldDays = null;
 
-			if (!TradeMatcher.IsMatch(rule, itemsToReceive, itemsToGive, cardSetSizes, gooValue, marketPrice)) {
+		if (ruleSet.Rules.Any(static rule => TradeMatcher.NeedsTradeHold(rule))) {
+#if ASF7
+			tradeHoldDays = await bot.GetTradeHoldDuration(tradeOffer.OtherSteamID64, tradeOffer.TradeOfferID, cancellationToken).ConfigureAwait(false);
+#else
+			tradeHoldDays = await bot.GetTradeHoldDuration(tradeOffer.OtherSteamID64, tradeOffer.TradeOfferID).ConfigureAwait(false);
+#endif
+		}
+
+		for (int ruleIndex = 0; ruleIndex < ruleSet.Rules.Count; ruleIndex++) {
+			CompiledTradeRule rule = ruleSet.Rules[ruleIndex];
+			int marketCurrency = ruleCurrencies[ruleIndex];
+
+			Func<Asset, MarketQuote?>? marketPrice = rule.HasMarketRequirement && (marketCurrency > 0) && marketPrices.TryGetValue(marketCurrency, out Func<Asset, MarketQuote?>? resolvedMarketPrice) ? resolvedMarketPrice : null;
+
+			if (!TradeMatcher.IsMatch(rule, itemsToReceive, itemsToGive, cardSetSizes, gooValue, marketPrice, tradeHoldDays)) {
 				continue;
 			}
 
@@ -369,6 +384,27 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 		return $"{PluginName} is enabled for {bot.BotName} with {ruleSet.Rules.Count} valid rule(s): {acceptRules} accept, {declineRules} decline.";
 	}
 
+	/// <summary>
+	///     Returns the Steam currency ID that a market rule has to price in. Rules written with
+	///     <c>"Currency": "Wallet"</c> follow the currency of the bot's own Steam wallet, which is what the account is
+	///     actually charged in. When Steam has not reported a currency for the bot, the rule cannot be priced and is left to
+	///     not match.
+	/// </summary>
+	private static int ResolveMarketCurrency(Bot bot, CompiledTradeRule rule) {
+		if (!rule.MarketCurrencyFollowsWallet) {
+			return rule.MarketCurrency;
+		}
+
+		// Steam reports the wallet currency while logging in; until it does, there is nothing to price against.
+		if (bot.WalletCurrency == default) {
+			bot.ArchiLogger.LogGenericWarning($"[{PluginName}] Rule \"{rule.Description}\" uses the wallet currency, but Steam has not reported one for this bot, so the rule cannot be priced and will not match.");
+
+			return 0;
+		}
+
+		return Convert.ToInt32(bot.WalletCurrency, CultureInfo.InvariantCulture);
+	}
+
 	private static string FormatRules(Bot bot, BotRuleSet? ruleSet) {
 		if (ruleSet == null) {
 			return $"{PluginName} is not configured for {bot.BotName}.";
@@ -429,7 +465,7 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 				response.Append("; market profit: at least ");
 
 				if (rule.MarketMinProfit > 0) {
-					response.Append(rule.MarketMinProfit.ToString(CultureInfo.InvariantCulture)).Append(" currency ").Append(rule.MarketCurrency.ToString(CultureInfo.InvariantCulture));
+					response.Append(rule.MarketMinProfit.ToString(CultureInfo.InvariantCulture)).Append(" in ").Append(MarketCurrency.Describe(rule.MarketCurrency, rule.MarketCurrencyFollowsWallet));
 				}
 
 				if (rule.MarketMinProfitPercent > 0) {
@@ -445,6 +481,10 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 				if (rule.MarketMaxUnitPrice > 0) {
 					response.Append("; max unit price: ").Append(rule.MarketMaxUnitPrice.ToString(CultureInfo.InvariantCulture));
 				}
+			}
+
+			if (rule.HasTradeHoldRequirement) {
+				response.Append("; trade hold: ").Append(rule.TradeHoldMinDays.ToString(CultureInfo.InvariantCulture)).Append('-').Append(rule.TradeHoldMaxDays.ToString(CultureInfo.InvariantCulture)).Append(" day(s)");
 			}
 
 			response.Append(']');

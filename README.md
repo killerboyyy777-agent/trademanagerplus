@@ -159,7 +159,7 @@ Add a top-level `TradeManagerPlus` property to your bot config (for example `con
           }
         },
         "MarketProfit": {
-          "Currency": 1,
+          "Currency": "Wallet",
           "MinProfit": 0.05,
           "MinProfitPercent": 10,
           "MinVolume": 10
@@ -170,7 +170,8 @@ Add a top-level `TradeManagerPlus` property to your bot config (for example `con
         "Type": "Decline",
         "Conditions": {
           "MyItems": {
-            "Rarities": ["Rare", "Mythical", "Legendary", "Ancient", "Immortal", "Arcana", "Unusual"]
+            "Rarities": ["Rare"],
+            "CustomRarities": ["Mythical", "Legendary", "Ancient", "Immortal", "Arcana", "Unusual"]
           }
         },
         "Description": "Never give away rare or better items."
@@ -198,6 +199,7 @@ Add a top-level `TradeManagerPlus` property to your bot config (for example `con
 | `TradeRules[].ItemPrices` | `[]` | Gem value of one unit of an item, for things that are not cards or gems: `[{ "Type": "ProfileBackground", "Gems": 3 }]`. |
 | `TradeRules[].Value` | disabled | Compares the gem value of both sides. See [Comparing value](#comparing-value-with-value). |
 | `TradeRules[].MarketProfit` | disabled | Accepts trades whose market value beats the cost by a margin. See [Market profit](#market-profit-with-marketprofit). |
+| `TradeRules[].TradeHold` | disabled | Restricts the rule to a range of trade hold days, for example `{ "MaxDays": 0 }` to only accept trades that are not held. See [Trade hold](#trade-hold). |
 
 ### Item conditions
 
@@ -210,7 +212,8 @@ Either side also accepts **a list** of condition objects instead of one object. 
 | `AppIDs` | List of real AppIDs the items must belong to, for example `[753]` for Steam inventory items. |
 | `ExcludedAppIDs` | List of real AppIDs that must never appear on this side, for example `[730]` to refuse CS items. |
 | `Types` | List of item types. Matching is case-insensitive and ignores spaces, hyphens and underscores, so both `TradingCard` and `Trading Card` work. |
-| `Rarities` | List of item rarities, same lenient naming. |
+| `Rarities` | List of Steam Community item rarities: `Common`, `Uncommon` and `Rare`. Those are the only tiers Steam Community items use, so a name from another inventory is rejected here. |
+| `CustomRarities` | Extra rarity tiers from other inventories, such as TF2 or CS: `Mythical`, `Legendary`, `Ancient`, `Immortal`, `Arcana`, `Unusual`, and the Steam aliases `Epic`, `Exotic`, `Extraordinary`, `Contraband`. Leave it out unless you trade items from a game that marks them with those tiers. |
 | `Names` | List of exact item names, matched against both the market hash name and the plain name, ignoring case. Use it for items that type and AppID cannot tell apart, for example `Mann Co. Supply Crate Key`. |
 | `SetSizes` | List of Steam card set sizes the items must belong to, for example `[8]` for games whose set has 8 cards. See below. |
 | `MinAmount` | Minimum total quantity of items in this condition. `0` means no minimum. |
@@ -309,7 +312,7 @@ Steam's gem values are read per item type and community AppID from `steamcommuni
 
 | Property | Default | Description |
 | --- | --- | --- |
-| `MarketProfit.Currency` | `1` | Steam currency ID for the price lookups, `1` for USD, `2` for GBP, `3` for EUR. |
+| `MarketProfit.Currency` | `1` | Steam currency used for the price lookups. Accepts a currency ID (`1` for USD, `2` for GBP, `3` for EUR) or `Wallet` to use the currency of the bot's own Steam wallet. |
 | `MarketProfit.MinProfit` | `0` | Minimum profit in that currency, for example `0.05`. |
 | `MarketProfit.MinProfitPercent` | `0` | Minimum profit as a percentage of the market value given, for example `10`. |
 | `MarketProfit.MinVolume` | `10` | Minimum units sold in the last 24 hours before a price is trusted. |
@@ -330,6 +333,19 @@ Market prices are buyer prices and include Steam's fee, which is currently aroun
 Steam's market feed is not an auction house with guaranteed liquidity, so treat this rule as a filter, not as a guarantee. If you trade in illiquid items, raise `MinVolume` and set a `MaxUnitPrice` that fits them.
 
 A rule with pricing or a market requirement but nothing to receive never matches, so value cannot leave your inventory for an empty trade.
+
+A rule that sets `Currency` to `Wallet` prices every lookup in the currency of the bot's own Steam wallet, which is the currency Steam shows that account and holds its balance in. It saves translating your wallet into a number, and it keeps working if the account moves to another region. If Steam has not reported a wallet currency for a bot, the rule cannot be priced and does not match.
+
+### Trade hold
+
+Steam can hold a trade for up to 15 days when the receiving account has no mobile authenticator, or when either account recently changed its password or guard. `TradeHold` restricts a rule to a range of held days:
+
+| Property | Default | Description |
+| --- | --- | --- |
+| `TradeHold.MinDays` | `0` | Smallest hold in days the rule accepts. `0` includes trades that are not held at all. |
+| `TradeHold.MaxDays` | `15` | Largest hold in days the rule accepts. Set it to `0` to only accept trades that are not held. |
+
+`{ "MaxDays": 0 }` is the usual choice: it refuses escrowed trades and only accepts items that arrive immediately. Like every other requirement, an unknown hold never matches a rule that asks for one, so a failed lookup refuses the offer instead of accepting a hold you did not want.
 
 ### Item types
 
