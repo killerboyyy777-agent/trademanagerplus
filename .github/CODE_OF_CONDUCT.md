@@ -60,12 +60,12 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at ## Contact
+reported to the maintainer responsible for enforcement:
 
-For business-related questions, you can reach me at:
 - **Steam:** [steamcommunity.com/id/klb777](https://steamcommunity.com/id/klb777)
 - **Discord:** killerboyyy777
-.
+- **GitHub:** [private report](https://github.com/killerboyyy777/trademanagerplus/security/advisories/new)
+
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
