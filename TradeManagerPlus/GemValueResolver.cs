@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -36,6 +37,15 @@ internal static class GemValueResolver {
 
 		foreach (Asset item in items) {
 			if (!TryGetGooKey(item, out GooKey key) || values.ContainsKey(key)) {
+				continue;
+			}
+
+			// A cached value costs no request, so it does not count against the per-offer budget.
+			if (TryGetCachedValue(key, out uint? cached)) {
+				if (cached.HasValue) {
+					values[key] = cached.Value;
+				}
+
 				continue;
 			}
 
@@ -145,6 +155,18 @@ internal static class GemValueResolver {
 		return true;
 	}
 
+	private static bool TryGetCachedValue(GooKey key, out uint? value) {
+		if (Cache.TryGetValue(key, out CacheEntry cached) && (cached.ExpiresUtc > DateTime.UtcNow)) {
+			value = cached.Value;
+
+			return true;
+		}
+
+		value = null;
+
+		return false;
+	}
+
 	private static async Task<uint?> GetGooValueAsync(Bot bot, GooKey key, CancellationToken cancellationToken) {
 		if (Cache.TryGetValue(key, out CacheEntry cached) && (cached.ExpiresUtc > DateTime.UtcNow)) {
 			return cached.Value;
@@ -183,7 +205,7 @@ internal static class GemValueResolver {
 
 		GooValueResponse? content = response?.Content;
 
-		if ((content != null) && (content.Success == 1) && uint.TryParse(content.GooValue, out uint value) && (value > 0)) {
+		if ((content != null) && (content.Success == 1) && uint.TryParse(content.GooValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out uint value) && (value > 0)) {
 			return value;
 		}
 

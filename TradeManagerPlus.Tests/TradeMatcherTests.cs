@@ -1213,6 +1213,68 @@ public sealed class TradeMatcherTests {
 		return item == given ? new MarketQuote(givenPrice, 50) : null;
 	};
 
+	[TestMethod]
+	public void PricedRuleDoesNotMatchAnOfferThatReceivesNothing() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": { "MyItems": { "Types": ["SteamGems"] } },
+				"GemsPerCard": 10,
+				"Description": "Buy cards at 10 gems each."
+			}
+			"""
+		);
+
+		// Without the guard the empty side would be priced at zero and any amount of gems would cover it.
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [], Gems(100)));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [CreateAsset(EAssetType.TradingCard)], Gems(10)));
+	}
+
+	[TestMethod]
+	public void ValueWithoutAnyPriceIsRejected() => AssertCompileFails(
+		"""
+		{
+			"Type": "Accept",
+			"Value": { "Direction": "Sell", "Factor": 2 }
+		}
+		""",
+		"'Value' is set but the rule prices nothing"
+	);
+
+	[TestMethod]
+	public void GooTypeWithoutASteamValueIsRejected() => AssertCompileFails(
+		"""
+		{
+			"Type": "Accept",
+			"Value": { "GooTypes": ["Unknown"] }
+		}
+		""",
+		"has no Steam gem value"
+	);
+
+	[TestMethod]
+	public void CardEquivalentWithoutASetSizeCannotBePricedPerSet() => AssertCompileFails(
+		"""
+		{
+			"Type": "Accept",
+			"GemPrices": [ { "SetSize": 5, "Gems": 10 } ],
+			"CardEquivalents": [ { "Type": "Sticker", "Cards": 2 } ]
+		}
+		""",
+		"has no card set size"
+	);
+
+	[TestMethod]
+	public void UnknownConfigPropertyIsRejected() => Assert.Throws<JsonException>(() => ParseConfig(
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": { "TheirItem": { "Types": ["Trading Card"] } }
+		}
+		"""
+	));
+
 	private static void AssertCompileFails(string ruleJson, string expectedErrorFragment) {
 		PluginConfig config = ParseConfig(ruleJson);
 		TradeRuleConfig ruleConfig = config.TradeRules!.Single();
