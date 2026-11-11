@@ -387,7 +387,7 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 			CompiledTradeRule rule = ruleSet.Rules[i];
 
 			response.Append(Environment.NewLine).Append(i + 1).Append(". ").Append(rule.Action.ToString()).Append(": ").Append(string.IsNullOrWhiteSpace(rule.Description) ? "(no description)" : rule.Description);
-			response.Append(" [receive: ").Append(rule.TheirItems.Describe()).Append("; give: ").Append(rule.MyItems.Describe());
+			response.Append(" [receive: ").Append(DescribeConditions(rule.TheirItems, rule.Logic)).Append("; give: ").Append(DescribeConditions(rule.MyItems, rule.Logic));
 
 			if (rule.GemPrices.Count > 0) {
 				response.Append("; price: ").Append(string.Join(", ", rule.GemPrices.Select(static price => $"{price.Key}-card set = {price.Value} gems")));
@@ -452,6 +452,15 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 
 		return response.ToString();
 	}
+
+	/// <summary>
+	///     Renders the condition groups of one side for the <c>!TMP RULES</c> command.
+	/// </summary>
+	private static string DescribeConditions(IReadOnlyList<CompiledItemConditions> conditions, TradeRuleLogic logic) => conditions.Count switch {
+		0 => "anything",
+		1 => conditions[0].Describe(),
+		_ => string.Join(logic == TradeRuleLogic.Any ? " or " : " and ", conditions.Select(static group => group.Describe()))
+	};
 
 	private static string FormatHelp() => $"{PluginName} commands: TMP STATUS, TMP RULES. The old TEST command is kept as an alias of TMP STATUS.";
 }

@@ -204,7 +204,7 @@ public sealed class TradeMatcherTests {
 			"""
 		);
 
-		Assert.Contains(EAssetRarity.Mythical, rule.TheirItems.Rarities);
+		Assert.Contains(EAssetRarity.Mythical, rule.TheirItems[0].Rarities);
 	}
 
 	[TestMethod]
@@ -922,6 +922,56 @@ public sealed class TradeMatcherTests {
 	);
 
 	[TestMethod]
+	public void SingleConditionWithAnyCountsTheWholeSide() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"ConditionLogic": "Any",
+				"Conditions": {
+					"TheirItems": { "Types": ["TradingCard"], "MinAmount": 3 }
+				}
+			}
+			"""
+		);
+
+		Asset card = CreateAsset(EAssetType.TradingCard);
+		Asset booster = CreateAsset(EAssetType.BoosterPack);
+
+		// A single condition keeps its original meaning: the amount window covers the whole side, so two boosters plus one
+		// card reach the minimum even though only the card passes the filter.
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [card, booster, booster], []));
+	}
+
+	[TestMethod]
+	public void EmptyConditionListIsRejected() {
+		AssertCompileFails(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": { "TheirItems": [] }
+			}
+			""",
+			"is an empty list"
+		);
+	}
+
+	[TestMethod]
+	public void EmptyConditionInsideABasketIsRejected() {
+		AssertCompileFails(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": {
+					"TheirItems": [ { "AppIDs": [440], "MinAmount": 1 }, {} ]
+				}
+			}
+			""",
+			"has no conditions"
+		);
+	}
+
+	[TestMethod]
 	public void ReadmeExampleRulesCompile() {
 		string? readmePath = FindReadme();
 
@@ -932,25 +982,68 @@ public sealed class TradeMatcherTests {
 		}
 
 		string[] lines = File.ReadAllLines(readmePath);
-		int start = Array.FindIndex(lines, static line => line.Trim() == "```json");
+		int compiledRules = 0;
 
-		Assert.IsGreaterThanOrEqualTo(0, start, "README.md does not contain a json code block.");
+		for (int start = 0; start < lines.Length; start++) {
+			if (lines[start].Trim() != "```json") {
+				continue;
+			}
 
-		int end = Array.FindIndex(lines, start + 1, static line => line.Trim() == "```");
+			int end = Array.FindIndex(lines, start + 1, static line => line.Trim() == "```");
 
-		Assert.IsGreaterThan(start, end, "The json code block in README.md is not closed.");
+			Assert.IsGreaterThan(start, end, "A json code block in README.md is not closed.");
 
-		string json = string.Join('\n', lines[(start + 1)..end]);
+			string json = string.Join('\n', lines[(start + 1)..end]);
+			compiledRules += CompileReadmeCodeBlock(json, start + 1);
+			start = end;
+		}
 
-		using JsonDocument document = JsonDocument.Parse(json);
+		Assert.IsGreaterThan(0, compiledRules, "README.md does not contain a compilable rule.");
+	}
 
-		PluginConfig? config = document.RootElement.GetProperty("TradeManagerPlus").ToJsonObject<PluginConfig>();
+	/// <summary>
+	///     Compiles every rule of one README json block, which is either a full config or a single rule. Blocks that are
+	///     only a fragment of a rule, such as a lone property, are skipped because they are not valid JSON on their own.
+	/// </summary>
+	private static int CompileReadmeCodeBlock(string json, int lineNumber) {
+		JsonDocument document;
 
-		Assert.IsNotNull(config);
-		Assert.IsNotNull(config.TradeRules);
+		try {
+			document = JsonDocument.Parse(json);
+		} catch (JsonException) {
+			return 0;
+		}
 
-		foreach (TradeRuleConfig ruleConfig in config.TradeRules) {
-			Assert.IsTrue(RuleCompiler.TryCompile(ruleConfig, out _, out string? error), $"The README example rule \"{ruleConfig.Description}\" does not compile: {error}");
+		using (document) {
+			JsonElement root = document.RootElement;
+
+			if (root.ValueKind != JsonValueKind.Object) {
+				return 0;
+			}
+
+			if (!root.TryGetProperty("TradeManagerPlus", out JsonElement pluginConfig)) {
+				if (!root.TryGetProperty("Type", out _)) {
+					return 0;
+				}
+
+				TradeRuleConfig? singleRule = root.ToJsonObject<TradeRuleConfig>();
+
+				Assert.IsNotNull(singleRule);
+				Assert.IsTrue(RuleCompiler.TryCompile(singleRule, out _, out string? singleRuleError), $"The README rule at line {lineNumber} \"{singleRule.Description}\" does not compile: {singleRuleError}");
+
+				return 1;
+			}
+
+			PluginConfig? config = pluginConfig.ToJsonObject<PluginConfig>();
+
+			Assert.IsNotNull(config);
+			Assert.IsNotNull(config.TradeRules);
+
+			foreach (TradeRuleConfig ruleConfig in config.TradeRules) {
+				Assert.IsTrue(RuleCompiler.TryCompile(ruleConfig, out _, out string? ruleError), $"The README rule at line {lineNumber} \"{ruleConfig.Description}\" does not compile: {ruleError}");
+			}
+
+			return config.TradeRules.Count;
 		}
 	}
 
@@ -969,6 +1062,146 @@ public sealed class TradeMatcherTests {
 
 		return null;
 	}
+
+	private const string BasketJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": [
+					{ "AppIDs": [440], "MinAmount": 1, "MaxAmount": 1 },
+					{ "Types": ["TradingCard"], "SetSizes": [5], "MinAmount": 1, "MaxAmount": 1 },
+					{ "Types": ["TradingCard"], "SetSizes": [8], "MinAmount": 1, "MaxAmount": 1 }
+				],
+				"MyItems": { "Types": ["SteamGems"] }
+			},
+			"ItemPrices": [
+				{ "Type": "Unknown", "AppIDs": [440], "Gems": 10 },
+				{ "Type": "Sticker", "Gems": 1 }
+			],
+			"GemPrices": [
+				{ "SetSize": 5, "Gems": 7 },
+				{ "SetSize": 8, "Gems": 5 }
+			],
+			"Description": "One key plus one card from a set of 5 and one from a set of 8, paid in gems."
+		}
+		""";
+
+	private const string BasketAnyJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": [
+					{ "AppIDs": [440], "MinAmount": 1, "MaxAmount": 1 },
+					{ "Types": ["TradingCard"], "SetSizes": [5], "MinAmount": 1, "MaxAmount": 1 }
+				],
+				"MyItems": { "Types": ["SteamGems"] }
+			},
+			"ItemPrices": [ { "Type": "Unknown", "AppIDs": [440], "Gems": 10 } ],
+			"GemPrices": [ { "SetSize": 5, "Gems": 7 } ],
+			"ConditionLogic": "Any",
+			"Description": "A key or a card from a set of 5, paid in gems."
+		}
+		""";
+
+	private const string BasketAmountJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": [ { "Types": ["TradingCard"], "SetSizes": [5], "MinAmount": 1, "MaxAmount": 1 } ],
+				"MyItems": { "Types": ["SteamGems"] }
+			},
+			"Description": "Exactly one card from a set of 5."
+		}
+		""";
+
+	[TestMethod]
+	public void BasketMatchesWhenEveryShapeIsPresentAndPaid() {
+		CompiledTradeRule rule = CompileSingle(BasketJson);
+		Dictionary<uint, byte> setSizes = new() { [111] = 5, [222] = 8 };
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [Key(), Card(111), Card(222)], Gems(22), setSizes));
+	}
+
+	[TestMethod]
+	public void BasketRejectsOneGemShort() {
+		CompiledTradeRule rule = CompileSingle(BasketJson);
+		Dictionary<uint, byte> setSizes = new() { [111] = 5, [222] = 8 };
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [Key(), Card(111), Card(222)], Gems(21), setSizes));
+	}
+
+	[TestMethod]
+	public void BasketRejectsAMissingShape() {
+		CompiledTradeRule rule = CompileSingle(BasketJson);
+		Dictionary<uint, byte> setSizes = new() { [111] = 5, [222] = 8 };
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [Key(), Card(111)], Gems(22), setSizes));
+	}
+
+	[TestMethod]
+	public void BasketRejectsAnItemNoShapeAskedFor() {
+		CompiledTradeRule rule = CompileSingle(BasketJson);
+		Dictionary<uint, byte> setSizes = new() { [111] = 5, [222] = 8 };
+		Asset sticker = CreateAsset(EAssetType.Sticker, realAppID: 999);
+
+		// The sticker has a price, so the gem value is covered - the basket must still refuse it because no group asks
+		// for it.
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [Key(), Card(111), Card(222), sticker], Gems(23), setSizes));
+	}
+
+	[TestMethod]
+	public void BasketAnyLogicAcceptsOneSatisfiedShape() {
+		CompiledTradeRule rule = CompileSingle(BasketAnyJson);
+		Dictionary<uint, byte> setSizes = new() { [111] = 5 };
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [Card(111)], Gems(7), setSizes));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [Key()], Gems(10), setSizes));
+	}
+
+	[TestMethod]
+	public void BasketGroupAmountsAreCountedPerShape() {
+		CompiledTradeRule rule = CompileSingle(BasketAmountJson);
+		Dictionary<uint, byte> setSizes = new() { [111] = 5 };
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [Card(111)], Gems(100), setSizes));
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [Card(111), Card(111)], Gems(100), setSizes));
+	}
+
+	[TestMethod]
+	public void EmptyConditionGroupMatchesAnything() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": { "TheirItems": [ {} ] }
+			}
+			"""
+		);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [CreateAsset(EAssetType.Emoticon)], []));
+	}
+
+	[TestMethod]
+	public void ConditionGroupListReportsTheFailingEntryPath() {
+		AssertCompileFails(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": { "TheirItems": [ { "MinAmount": 2, "MaxAmount": 1 } ] }
+			}
+			""",
+			"TheirItems[0].MinAmount"
+		);
+	}
+
+	private static Asset Key() => CreateAsset(EAssetType.Unknown, realAppID: 440);
+
+	private static Asset Card(uint appID) => CreateAsset(EAssetType.TradingCard, realAppID: appID);
+
+	private static Asset[] Gems(uint amount) => [CreateAsset(EAssetType.SteamGems, amount: amount)];
 
 	private static Func<Asset, ulong?> BackgroundGoo(ulong value) => item => item.Type == EAssetType.ProfileBackground ? value : null;
 

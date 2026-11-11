@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TradeManagerPlus;
@@ -229,16 +232,21 @@ internal sealed class ValueConditionConfig {
 
 internal sealed class ConditionsConfig {
 	/// <summary>
-	///     Conditions for the items the bot receives.
+	///     Conditions for the items the bot receives. Accepts either a single condition object or a list of them. A list
+	///     describes a basket of different items on that side, for example a TF2 key plus cards from two different card
+	///     sets. Every listed shape has to be satisfied when <c>ConditionLogic</c> is <c>All</c>.
 	/// </summary>
+	[JsonConverter(typeof(SingleOrArrayConverter<ItemConditionsConfig>))]
 	[JsonPropertyName("TheirItems")]
-	public ItemConditionsConfig? TheirItems { get; init; }
+	public IReadOnlyList<ItemConditionsConfig>? TheirItems { get; init; }
 
 	/// <summary>
-	///     Conditions for the items the bot gives away.
+	///     Conditions for the items the bot gives away. Accepts the same single object or list form as
+	///     <see cref="TheirItems" />.
 	/// </summary>
+	[JsonConverter(typeof(SingleOrArrayConverter<ItemConditionsConfig>))]
 	[JsonPropertyName("MyItems")]
-	public ItemConditionsConfig? MyItems { get; init; }
+	public IReadOnlyList<ItemConditionsConfig>? MyItems { get; init; }
 }
 
 internal sealed class ItemConditionsConfig {
@@ -261,8 +269,8 @@ internal sealed class ItemConditionsConfig {
 	public IReadOnlyList<string>? Rarities { get; init; }
 
 	/// <summary>
-	///     Real AppIDs that must never appear on this side, for example <c>[730]</c> to refuse CS items.
-	///     The check applies to every item on the side when <c>ConditionLogic</c> is <c>All</c>.
+	///     Real AppIDs that must never appear on this side, for example <c>[730]</c> to refuse CS items. When the side is
+	///     written as a single condition, the check applies to every item on the side.
 	/// </summary>
 	[JsonPropertyName("ExcludedAppIDs")]
 	public IReadOnlyList<uint>? ExcludedAppIDs { get; init; }
@@ -282,16 +290,57 @@ internal sealed class ItemConditionsConfig {
 	public IReadOnlyList<string>? Names { get; init; }
 
 	/// <summary>
-	///     Minimum total amount of items on this side of the trade. Absent or zero means no minimum.
+	///     Minimum total amount of items in this condition. Absent or zero means no minimum. In a list, the amount is
+	///     counted over the items that this entry matches, not over the whole side.
 	/// </summary>
 	[JsonPropertyName("MinAmount")]
 	public uint? MinAmount { get; init; }
 
 	/// <summary>
-	///     Maximum total amount of items on this side of the trade. Absent means no maximum.
+	///     Maximum total amount of items in this condition. Absent means no maximum. In a list, the amount is counted over
+	///     the items that this entry matches, not over the whole side.
 	/// </summary>
 	[JsonPropertyName("MaxAmount")]
 	public uint? MaxAmount { get; init; }
+}
+
+/// <summary>
+///     Reads a property that accepts either a single object or an array of objects, so a side can be written in the short
+///     form for one item shape and as a list for a basket of shapes.
+/// </summary>
+internal sealed class SingleOrArrayConverter<T> : JsonConverter<IReadOnlyList<T>> {
+	public override IReadOnlyList<T>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
+		if (reader.TokenType != JsonTokenType.StartArray) {
+			T? single = JsonSerializer.Deserialize<T>(ref reader, options);
+
+			return single == null ? null : new List<T> { single };
+		}
+
+		List<T> items = [];
+
+		while (reader.Read() && (reader.TokenType != JsonTokenType.EndArray)) {
+			T? item = JsonSerializer.Deserialize<T>(ref reader, options);
+
+			if (item == null) {
+				throw new JsonException($"Unable to read an entry of '{typeof(T).Name}'.");
+			}
+
+			items.Add(item);
+		}
+
+		return items;
+	}
+
+	public override void Write(Utf8JsonWriter writer, IReadOnlyList<T> value, JsonSerializerOptions options) {
+		// Keep the short form for a single condition so that writing the config back does not turn it into a list.
+		if (value.Count == 1) {
+			JsonSerializer.Serialize(writer, value[0], options);
+
+			return;
+		}
+
+		JsonSerializer.Serialize(writer, value.ToList(), options);
+	}
 }
 
 #pragma warning restore CA1812 // ASF uses these classes during runtime through JSON deserialization
