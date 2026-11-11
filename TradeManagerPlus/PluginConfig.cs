@@ -9,8 +9,9 @@ namespace TradeManagerPlus;
 #pragma warning disable CA1812 // ASF uses these classes during runtime through JSON deserialization
 
 /// <summary>
-///     Configuration of the plugin, read from the <c>TradeManagerPlus</c> section of the bot's <c>Plugins</c> config.
+///     Configuration of the plugin, read from the top-level <c>TradeManagerPlus</c> property of the bot config.
 /// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class PluginConfig {
 	/// <summary>
 	///     Allows to disable the plugin for a particular bot without removing the configuration.
@@ -25,6 +26,7 @@ internal sealed class PluginConfig {
 	public IReadOnlyList<TradeRuleConfig>? TradeRules { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class TradeRuleConfig {
 	/// <summary>
 	///     Action to take when the rule matches: <c>Accept</c> or <c>Decline</c>.
@@ -94,6 +96,7 @@ internal sealed class TradeRuleConfig {
 	public MarketProfitConfig? MarketProfit { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class MarketProfitConfig {
 	/// <summary>
 	///     Steam currency ID used for the price lookups, for example <c>1</c> for USD, <c>2</c> for GBP or <c>3</c> for
@@ -119,7 +122,7 @@ internal sealed class MarketProfitConfig {
 	/// <summary>
 	///     Minimum number of units sold in the last 24 hours before a price is trusted. Prices for items that trade less
 	///     than this are easy to manipulate and are ignored, making the rule not match. Defaults to <c>10</c>; set to
-	///     <c>0</c> to trust any price with a volume.
+	///     <c>0</c> to trust any price, including one that reports no volume at all.
 	/// </summary>
 	[JsonPropertyName("MinVolume")]
 	public uint? MinVolume { get; init; }
@@ -132,6 +135,7 @@ internal sealed class MarketProfitConfig {
 	public decimal? MaxUnitPrice { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class GemPriceConfig {
 	/// <summary>
 	///     Number of cards in the game's Steam card set, for example <c>8</c>.
@@ -146,6 +150,7 @@ internal sealed class GemPriceConfig {
 	public uint Gems { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class CardEquivalentConfig {
 	/// <summary>
 	///     Item type, for example <c>BoosterPack</c>. Same lenient naming as <c>Types</c>.
@@ -160,6 +165,7 @@ internal sealed class CardEquivalentConfig {
 	public uint Cards { get; init; } = 1;
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class ItemPriceConfig {
 	/// <summary>
 	///     Item type, for example <c>ProfileBackground</c> or <c>Emoticon</c>. Same lenient naming as <c>Types</c>.
@@ -189,17 +195,19 @@ internal sealed class ItemPriceConfig {
 	public uint Gems { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class ValueConditionConfig {
 	/// <summary>
-	///     Multiplier applied to the value of the items the bot gives, defaulting to <c>1</c>. Use <c>1.1</c> to require
-	///     receiving at least a tenth more value than giving, which is how a key or gem exchange is configured.
+	///     Multiplier applied to the priced side, defaulting to <c>1</c>. In the default <c>Buy</c> direction it
+	///     multiplies the value received, so <c>1.1</c> asks for 10% more than those items are worth. In <c>Sell</c> it
+	///     multiplies the value given, so <c>1.1</c> asks for at least 10% more than they cost.
 	/// </summary>
 	[JsonPropertyName("Factor")]
 	public decimal? Factor { get; init; }
 
 	/// <summary>
-	///     Value added to the items the bot gives before the comparison, defaulting to <c>0</c>. Negative values make
-	///     the rule accept slightly worse offers.
+	///     Value added to the priced side before the comparison, defaulting to <c>0</c>. A negative value makes the rule
+	///     accept slightly worse offers.
 	/// </summary>
 	[JsonPropertyName("Offset")]
 	public decimal? Offset { get; init; }
@@ -213,9 +221,10 @@ internal sealed class ValueConditionConfig {
 	public IReadOnlyList<string>? GooTypes { get; init; }
 
 	/// <summary>
-	///     When true, the value received has to be strictly greater than the value the bot gives, so an offer that is only
-	///     worth the same as what it costs is rejected. Defaults to true for rules that use <see cref="GooTypes" /> and to
-	///     false otherwise, because a plain gem price is paid exactly.
+	///     When true, the paying side has to be worth strictly more than the required price: the items given in
+	///     <c>Buy</c>, the items received in <c>Sell</c>. An offer worth exactly the requirement is rejected. Defaults to
+	///     true for rules that use <see cref="GooTypes" /> and to false otherwise, because a plain gem price is paid
+	///     exactly.
 	/// </summary>
 	[JsonPropertyName("Strict")]
 	public bool? Strict { get; init; }
@@ -230,6 +239,7 @@ internal sealed class ValueConditionConfig {
 	public string? Direction { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class ConditionsConfig {
 	/// <summary>
 	///     Conditions for the items the bot receives. Accepts either a single condition object or a list of them. A list
@@ -249,6 +259,7 @@ internal sealed class ConditionsConfig {
 	public IReadOnlyList<ItemConditionsConfig>? MyItems { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class ItemConditionsConfig {
 	/// <summary>
 	///     Allowed real AppIDs. Empty means "any AppID".

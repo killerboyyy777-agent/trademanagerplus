@@ -21,6 +21,8 @@ namespace TradeManagerPlus;
 ///     which keeps a broken lookup from accepting a trade by accident.
 /// </remarks>
 internal static class CardSetSizeResolver {
+	private const int MaxLookupsPerOffer = 15;
+
 	private static readonly ConcurrentDictionary<uint, CacheEntry> Cache = new();
 	private static readonly SemaphoreSlim LookupSemaphore = new(1, 1);
 	private static readonly TimeSpan SuccessTTL = TimeSpan.FromDays(7);
@@ -28,8 +30,27 @@ internal static class CardSetSizeResolver {
 
 	internal static async Task<IReadOnlyDictionary<uint, byte>> ResolveAsync(Bot bot, IEnumerable<uint> appIDs, CancellationToken cancellationToken = default) {
 		Dictionary<uint, byte> result = [];
+		int lookups = 0;
 
 		foreach (uint appID in appIDs) {
+			// Values that are already cached cost nothing, so they do not count against the budget below.
+			if (Cache.TryGetValue(appID, out CacheEntry cachedEntry) && (cachedEntry.ExpiresUtc > DateTime.UtcNow)) {
+				if (cachedEntry.Size.HasValue) {
+					result[appID] = cachedEntry.Size.Value;
+				}
+
+				continue;
+			}
+
+			// The page fetch is serialized behind one semaphore, so an offer with many unknown games must not be able
+			// to hold the trade-offer callback for an unbounded time. Cards that were not looked up stay unknown and
+			// their rule simply does not match.
+			if (lookups >= MaxLookupsPerOffer) {
+				break;
+			}
+
+			lookups++;
+
 			byte? setSize = await GetCardSetSizeAsync(bot, appID, cancellationToken).ConfigureAwait(false);
 
 			if (setSize.HasValue) {

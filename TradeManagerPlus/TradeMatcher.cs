@@ -51,6 +51,12 @@ internal static class TradeMatcher {
 			return false;
 		}
 
+		// A priced trade always moves items in both directions. Without this check an offer that gives nothing back
+		// prices its empty side at zero and passes every comparison below.
+		if ((itemsToReceive.Count == 0) || (itemsToGive.Count == 0)) {
+			return false;
+		}
+
 		// A rule built on Steam's own values accepts only offers that are actually worth more, while a configured price is
 		// paid to the gem.
 		if (rule.ValueBuy) {

@@ -27,7 +27,7 @@ TradeManagerPlus is a plugin for **[ArchiSteamFarm](https://github.com/JustArchi
 - **Value comparison**: compare the gem value of both sides, using configured prices, Steam's own gem ("goo") values for backgrounds, emoticons and similar items, or a mix of both.
 - **Market profit**: accept trades where the Steam Community market value of what you receive beats what you give by a flat and/or percentage margin.
 - **Safe by default**: if no rule matches, ASF handles the offer exactly as it would without the plugin. Anything the plugin cannot price is treated as "unknown", never as zero, so an unpriceable item can never make a bad trade look good.
-- **Validation**: malformed rules are reported in the ASF log and skipped instead of breaking the plugin.
+- **Validation**: every rule is checked when the bot loads. A rule that cannot work is reported in the ASF log and skipped, and so is a malformed `TradeManagerPlus` section, which leaves that bot without rules rather than with rules you did not write.
 - **Inspection**: `TMP STATUS` and `TMP RULES` commands show the loaded configuration.
 - **Automatic updates**: the plugin uses ASF's GitHub plugin update mechanism, so ASF offers new releases on its own.
 
@@ -53,7 +53,7 @@ The ASF 6 asset requires ASF 6.3.11.7 and .NET 10. The ASF 7 asset requires the 
 
 ## Configuration
 
-Add a top-level `TradeManagerPlus` property to your bot config (for example `config/MyBot.json`), next to the other ASF properties:
+Add a top-level `TradeManagerPlus` property to your bot config (for example `config/MyBot.json`), next to the other ASF properties. Unknown properties inside it are rejected, so a typo such as `MyItem` fails the config instead of silently widening a rule:
 
 ```json
 {
@@ -219,8 +219,8 @@ Either side also accepts **a list** of condition objects instead of one object. 
 **How a side is evaluated:**
 
 1. A side without conditions, or with an empty condition object, matches anything, including an empty side.
-2. A side written as a single condition object behaves exactly as it always has: `MinAmount`/`MaxAmount` are checked against the total quantity of items on that side, and the filters then decide whether every item (`All`) or at least one item (`Any`) must match.
-3. In a list, each condition owns its items: `MinAmount`/`MaxAmount` are checked against the total quantity of items that satisfy that condition's own filters, not against the whole side.
+2. A side with a single condition — written either as one object or as a one-entry list — behaves exactly as it always has: `MinAmount`/`MaxAmount` are checked against the total quantity of items on that side, and the filters then decide whether every item (`All`) or at least one item (`Any`) must match.
+3. In a list with more than one condition, each condition owns its items: `MinAmount`/`MaxAmount` are checked against the total quantity of items that satisfy that condition's own filters, not against the whole side.
 4. In a list, a condition whose filters match no item on the side fails, unless it has no item filters at all (amount-only conditions allow an empty side when `MinAmount` is `0`).
 5. `ConditionLogic` decides how the conditions of a list combine: `All` requires every condition to be satisfied **and** every item on the side to belong to at least one condition, so nothing can be slipped in. `Any` requires at least one condition to be satisfied.
 6. A list entry must describe some items; an entry with no properties is rejected when the list has more than one entry, because it would match anything and defeat the check above.
@@ -324,6 +324,8 @@ When both `MinProfit` and `MinProfitPercent` are set, the larger of the two is r
 - `MaxUnitPrice` rejects any single item priced above a cap, which stops one absurdly expensive item from making a bad trade look profitable.
 - Prices are only cached for an hour, so an artificial spike cannot be reused for long.
 - Anything it cannot price makes the rule not match. It never guesses, and it never treats an unknown item as worth zero.
+
+Market prices are buyer prices and include Steam's fee, which is currently around 15% in total. The bot never receives that fee when it sells what it got, so a margin below it can still be a loss; keep `MinProfitPercent` above 15 if you plan to resell the items you receive.
 
 Steam's market feed is not an auction house with guaranteed liquidity, so treat this rule as a filter, not as a guarantee. If you trade in illiquid items, raise `MinVolume` and set a `MaxUnitPrice` that fits them.
 

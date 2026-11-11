@@ -374,6 +374,10 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 			return $"{PluginName} is not configured for {bot.BotName}.";
 		}
 
+		if (!ruleSet.Enabled) {
+			return $"{PluginName} is disabled for {bot.BotName}.";
+		}
+
 		if (ruleSet.Rules.Count == 0) {
 			return $"{PluginName} has no trade rules configured for {bot.BotName}.";
 		}

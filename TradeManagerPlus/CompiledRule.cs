@@ -372,6 +372,14 @@ internal static class RuleCompiler {
 					return false;
 				}
 
+				// Pricing by card set size needs a set size, and only card item types have one. Allowing any other
+				// type here would compile into a price that can never be resolved.
+				if ((gemPrices.Count > 0) && !TradeMatcher.UsesCardSetSizes(type)) {
+					error = $"'CardEquivalents' contains '{equivalent.Type}', which has no card set size; with 'GemPrices' only card item types can have a card count";
+
+					return false;
+				}
+
 				if (!cardEquivalents.TryAdd(type, equivalent.Cards)) {
 					error = $"'CardEquivalents' contains more than one entry for '{type}'";
 
@@ -473,6 +481,14 @@ internal static class RuleCompiler {
 					return false;
 				}
 
+				// Types Steam does not convert into gems would silently never resolve, which would make the rule
+				// never match at all.
+				if (!GemValueResolver.TryGetGooKind(gooType, out _, out _)) {
+					error = $"'Value.GooTypes' contains '{typeName}', which has no Steam gem value; use a type such as ProfileBackground or Emoticon";
+
+					return false;
+				}
+
 				if (!gooTypes.Add(gooType)) {
 					error = $"'Value.GooTypes' contains more than one entry for '{gooType}'";
 
@@ -512,6 +528,14 @@ internal static class RuleCompiler {
 
 		if (marketMinProfitPercent < 0) {
 			error = $"'MarketProfit.MinProfitPercent' must not be negative, but is {marketMinProfitPercent}";
+
+			return false;
+		}
+
+		// A 'Value' block without anything to price would compare nothing and match every trade, which is never what
+		// the author meant.
+		if ((config.Value != null) && (gemPrices.Count == 0) && ((config.GemsPerCard ?? 0) == 0) && (itemPrices.Count == 0) && !gooAllTypes && (gooTypes.Count == 0)) {
+			error = "'Value' is set but the rule prices nothing; add 'GemsPerCard', 'GemPrices', 'ItemPrices' or 'Value.GooTypes'";
 
 			return false;
 		}
