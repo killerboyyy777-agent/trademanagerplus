@@ -1,7 +1,12 @@
 # TradeManagerPlus for ArchiSteamFarm
 
-[![Steam donate](https://img.shields.io/badge/Steam-donate-000000.svg?logo=steam)](https://steamcommunity.com/tradeoffer/new/?partner=1211192445&token=T9Hiu3Oz)
+[![CI](https://github.com/killerboyyy777/trademanagerplus/actions/workflows/ci.yml/badge.svg)](https://github.com/killerboyyy777/trademanagerplus/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/killerboyyy777/trademanagerplus?logo=github&label=release)](https://github.com/killerboyyy777/trademanagerplus/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/killerboyyy777/trademanagerplus/total?logo=github&label=downloads)](https://github.com/killerboyyy777/trademanagerplus/releases)
+[![License](https://img.shields.io/github/license/killerboyyy777/trademanagerplus)](LICENSE.txt)
+[![ArchiSteamFarm](https://img.shields.io/badge/ArchiSteamFarm-6.3.11.7%20%7C%207.0.0.7-blue)](https://github.com/JustArchiNET/ArchiSteamFarm)
 
+[![Steam donate](https://img.shields.io/badge/Steam-donate-000000.svg?logo=steam)](https://steamcommunity.com/tradeoffer/new/?partner=1211192445&token=T9Hiu3Oz)
 [![BTC donate](https://img.shields.io/badge/BTC-donate-f7931a.svg?logo=bitcoin)](https://www.blockchain.com/explorer/addresses/btc/bc1qmkv939k2wqsej657cxj25ppwqdh65y2umnv3gg)
 [![LTC donate](https://img.shields.io/badge/LTC-donate-a6a9aa.svg?logo=litecoin)](https://live.blockcypher.com/ltc/address/ltc1qjr49nr028mcajlt7prmmnqnjh0552qjj90zdq4)
 [![XMR donate](https://img.shields.io/badge/XMR-donate-FF6600.svg?logo=monero)](monero:82oJRDdiSWWbem3HiYx7ZdDdiPkYQAW4LaGNHpNcJ9DCendQ3XcxHNYQiRMtfghYtSMmARPGqKe2ddSrhtjviTraEyGwgZ2)
@@ -383,6 +388,7 @@ For ASF 7, add `-p:AsfMajor=7` to the test command as well.
 
 ## Contact
 
+- **Issues:** [github.com/killerboyyy777/trademanagerplus/issues](https://github.com/killerboyyy777/trademanagerplus/issues)
 - **Steam:** [steamcommunity.com/id/klb777](https://steamcommunity.com/id/klb777)
 - **Discord:** killerboyyy777
 

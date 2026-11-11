@@ -1,2 +1,6 @@
-github: JustArchi
-custom: ["https://paypal.me/JustArchi", "https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=HD2P2P3WGS5Y4", "https://pay.revolut.com/justarchi", "https://steamcommunity.com/tradeoffer/new/?partner=46697991&token=0ix2Ruv_"]
+# These are supported funding model platforms
+
+custom:
+  - https://steamcommunity.com/tradeoffer/new/?partner=1211192445&token=T9Hiu3Oz
+  - https://www.blockchain.com/explorer/addresses/btc/bc1qmkv939k2wqsej657cxj25ppwqdh65y2umnv3gg
+  - https://live.blockcypher.com/ltc/address/ltc1qjr49nr028mcajlt7prmmnqnjh0552qjj90zdq4
