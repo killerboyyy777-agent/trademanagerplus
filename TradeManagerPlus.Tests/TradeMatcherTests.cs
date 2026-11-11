@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using ArchiSteamFarm.Helpers.Json;
 using ArchiSteamFarm.Steam.Data;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -17,6 +20,92 @@ public sealed class TradeMatcherTests {
 				"MyItems": { "Types": ["Trading Card"] }
 			},
 			"Description": "1:1 trading cards"
+		}
+		""";
+
+	private const string AcceptCardSetJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": { "Types": ["TradingCard"], "SetSizes": [8], "MinAmount": 8 },
+				"MyItems": { "Types": ["SteamGems"], "MinAmount": 600 }
+			},
+			"Description": "Accept an 8-card set for at least 600 gems."
+		}
+		""";
+
+	private const string AcceptPricedCardSetJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": { "Types": ["TradingCard"], "SetSizes": [8] },
+				"MyItems": { "Types": ["SteamGems"] }
+			},
+			"GemsPerCard": 10,
+			"Description": "Buy any card from an 8-card set at 10 gems each, or better."
+		}
+		""";
+
+	private const string GemPriceTableJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": { "Types": ["TradingCard"] },
+				"MyItems": { "Types": ["SteamGems"] }
+			},
+			"GemPrices": [
+				{ "SetSize": 5, "Gems": 70 },
+				{ "SetSize": 6, "Gems": 58 },
+				{ "SetSize": 8, "Gems": 43 },
+				{ "SetSize": 15, "Gems": 23 }
+			],
+			"Description": "Buy cards at set-based gem prices."
+		}
+		""";
+
+	private const string GemPriceTableWithBoosterJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": { "Types": ["TradingCard", "BoosterPack"] },
+				"MyItems": { "Types": ["SteamGems"] }
+			},
+			"GemPrices": [
+				{ "SetSize": 5, "Gems": 70 },
+				{ "SetSize": 8, "Gems": 43 }
+			],
+			"CardEquivalents": [ { "Type": "BoosterPack", "Cards": 3 } ],
+			"Description": "Buy cards and booster packs at set-based gem prices."
+		}
+		""";
+
+	private const string SellBackgroundsForGooJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": { "Types": ["SteamGems"] },
+				"MyItems": { "Types": ["ProfileBackground"] }
+			},
+			"Value": { "GooTypes": ["ProfileBackground"], "Direction": "Sell" },
+			"Description": "Sell backgrounds for more than their Steam gem value."
+		}
+		""";
+
+	private const string ItemPriceJson =
+		"""
+		{
+			"Type": "Accept",
+			"Conditions": {
+				"TheirItems": { "Types": ["ProfileBackground"] },
+				"MyItems": { "Types": ["SteamGems"] }
+			},
+			"ItemPrices": [ { "Type": "ProfileBackground", "Gems": 3 } ],
+			"Description": "Buy backgrounds at 3 gems each."
 		}
 		""";
 
@@ -221,6 +310,676 @@ public sealed class TradeMatcherTests {
 		Assert.IsFalse(config!.Enabled);
 	}
 
+	[TestMethod]
+	public void CardSetOfRequestedSizeMatches() {
+		CompiledTradeRule rule = CompileSingle(AcceptCardSetJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 8, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 600);
+		Dictionary<uint, byte> setSizes = new() { [440] = 8 };
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [cards], [gems], setSizes));
+	}
+
+	[TestMethod]
+	public void CardSetOfDifferentSizeDoesNotMatch() {
+		CompiledTradeRule rule = CompileSingle(AcceptCardSetJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 8, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 600);
+		Dictionary<uint, byte> setSizes = new() { [440] = 5 };
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [gems], setSizes));
+	}
+
+	[TestMethod]
+	public void UnknownCardSetSizeDoesNotMatch() {
+		CompiledTradeRule rule = CompileSingle(AcceptCardSetJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 8, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 600);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [gems], new Dictionary<uint, byte>()));
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [gems]));
+	}
+
+	[TestMethod]
+	public void TooFewGemsDoNotMatch() {
+		CompiledTradeRule rule = CompileSingle(AcceptCardSetJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 8, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 599);
+		Dictionary<uint, byte> setSizes = new() { [440] = 8 };
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [gems], setSizes));
+	}
+
+	[TestMethod]
+	public void CardSetSizeZeroIsRejected() => AssertCompileFails(
+		"""{ "Type": "Accept", "Conditions": { "TheirItems": { "SetSizes": [0] } } }""",
+		"SetSizes"
+	);
+
+	[TestMethod]
+	public void PricedCardsMatchAtExactPrice() {
+		CompiledTradeRule rule = CompileSingle(AcceptPricedCardSetJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 3, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 30);
+		Dictionary<uint, byte> setSizes = new() { [440] = 8 };
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [cards], [gems], setSizes));
+	}
+
+	[TestMethod]
+	public void PricedCardsAcceptBetterOffers() {
+		CompiledTradeRule rule = CompileSingle(AcceptPricedCardSetJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 3, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 250);
+		Dictionary<uint, byte> setSizes = new() { [440] = 8 };
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [cards], [gems], setSizes));
+	}
+
+	[TestMethod]
+	public void PricedCardsRejectLowerOffers() {
+		CompiledTradeRule rule = CompileSingle(AcceptPricedCardSetJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 3, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 29);
+		Dictionary<uint, byte> setSizes = new() { [440] = 8 };
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [gems], setSizes));
+	}
+
+	[TestMethod]
+	public void PricedCardsRequirePriceablePayment() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": { "TheirItems": { "Types": ["TradingCard"] } },
+				"GemsPerCard": 10
+			}
+			"""
+		);
+
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 2);
+		Asset unpriceable = CreateAsset(EAssetType.Emoticon, amount: 1000);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [unpriceable]));
+	}
+
+	[TestMethod]
+	public void PricedCardsAcceptOtherCardsAsPayment() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": { "TheirItems": { "Types": ["TradingCard"] } },
+				"GemsPerCard": 10
+			}
+			"""
+		);
+
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 2);
+		Asset payment = CreateAsset(EAssetType.TradingCard, amount: 1000);
+
+		// A card is worth a card, so this pays far more than the price of two cards.
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [cards], [payment]));
+	}
+
+	[TestMethod]
+	public void PricedCardsRequireSomethingToSell() {
+		CompiledTradeRule rule = CompileSingle(AcceptPricedCardSetJson);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [], [CreateAsset(EAssetType.SteamGems, amount: 1000)]));
+	}
+
+	[TestMethod]
+	public void SetPriceTableMatchesAtExactPrice() {
+		CompiledTradeRule rule = CompileSingle(GemPriceTableJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 2, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 86);
+		Dictionary<uint, byte> setSizes = new() { [440] = 8 };
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [cards], [gems], setSizes));
+	}
+
+	[TestMethod]
+	public void SetPriceTableRejectsLowerOffer() {
+		CompiledTradeRule rule = CompileSingle(GemPriceTableJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 2, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 85);
+		Dictionary<uint, byte> setSizes = new() { [440] = 8 };
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [gems], setSizes));
+	}
+
+	[TestMethod]
+	public void SetPriceTableAcceptsBetterOffer() {
+		CompiledTradeRule rule = CompileSingle(GemPriceTableJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 2, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 500);
+		Dictionary<uint, byte> setSizes = new() { [440] = 8 };
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [cards], [gems], setSizes));
+	}
+
+	[TestMethod]
+	public void SetSmallerThanPriceTableUsesSmallestSetPrice() {
+		CompiledTradeRule rule = CompileSingle(GemPriceTableJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 1, realAppID: 440);
+		Dictionary<uint, byte> setSizes = new() { [440] = 3 };
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [CreateAsset(EAssetType.SteamGems, amount: 69)], setSizes));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [cards], [CreateAsset(EAssetType.SteamGems, amount: 70)], setSizes));
+	}
+
+	[TestMethod]
+	public void SetLargerThanPriceTableUsesLargestSetPrice() {
+		CompiledTradeRule rule = CompileSingle(GemPriceTableJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 1, realAppID: 440);
+		Dictionary<uint, byte> setSizes = new() { [440] = 20 };
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [CreateAsset(EAssetType.SteamGems, amount: 22)], setSizes));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [cards], [CreateAsset(EAssetType.SteamGems, amount: 23)], setSizes));
+	}
+
+	[TestMethod]
+	public void SetSizeWithoutPriceDoesNotMatch() {
+		CompiledTradeRule rule = CompileSingle(GemPriceTableJson);
+		Asset cards = CreateAsset(EAssetType.TradingCard, amount: 1, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 1000);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [cards], [gems], new Dictionary<uint, byte>()));
+	}
+
+	[TestMethod]
+	public void BoosterPackCountsAsItsConfiguredCards() {
+		CompiledTradeRule rule = CompileSingle(GemPriceTableWithBoosterJson);
+		Asset boosterPack = CreateAsset(EAssetType.BoosterPack, amount: 1, realAppID: 440);
+		Dictionary<uint, byte> setSizes = new() { [440] = 8 };
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [boosterPack], [CreateAsset(EAssetType.SteamGems, amount: 128)], setSizes));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [boosterPack], [CreateAsset(EAssetType.SteamGems, amount: 129)], setSizes));
+	}
+
+	[TestMethod]
+	public void ItemWithoutPriceDoesNotMatch() {
+		CompiledTradeRule rule = CompileSingle(GemPriceTableJson);
+		Asset emoticon = CreateAsset(EAssetType.Emoticon, amount: 1, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 10000);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [emoticon], [gems], new Dictionary<uint, byte> { [440] = 8 }));
+	}
+
+	[TestMethod]
+	public void ExcludedAppIDDoesNotMatch() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": {
+					"TheirItems": { "Types": ["TradingCard"], "ExcludedAppIDs": [730] },
+					"MyItems": { "Types": ["SteamGems"] }
+				}
+			}
+			"""
+		);
+
+		Asset csCard = CreateAsset(EAssetType.TradingCard, realAppID: 730);
+		Asset otherCard = CreateAsset(EAssetType.TradingCard, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 100);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [csCard], [gems]));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [otherCard], [gems]));
+	}
+
+	[TestMethod]
+	public void DuplicateGemPriceSetSizeIsRejected() => AssertCompileFails(
+		"""
+		{
+			"Type": "Accept",
+			"GemPrices": [ { "SetSize": 8, "Gems": 43 }, { "SetSize": 8, "Gems": 40 } ]
+		}
+		""",
+		"more than one price for card set size 8"
+	);
+
+	[TestMethod]
+	public void ZeroGemPriceIsRejected() => AssertCompileFails(
+		"""
+		{
+			"Type": "Accept",
+			"GemPrices": [ { "SetSize": 8, "Gems": 0 } ]
+		}
+		""",
+		"price of 0 gems"
+	);
+
+	[TestMethod]
+	public void FlatPriceAndSetPriceTableCannotBeCombined() => AssertCompileFails(
+		"""
+		{
+			"Type": "Accept",
+			"GemsPerCard": 10,
+			"GemPrices": [ { "SetSize": 8, "Gems": 43 } ]
+		}
+		""",
+		"uses both"
+	);
+
+	[TestMethod]
+	public void ZeroCardEquivalentIsRejected() => AssertCompileFails(
+		"""
+		{
+			"Type": "Accept",
+			"CardEquivalents": [ { "Type": "BoosterPack", "Cards": 0 } ]
+		}
+		""",
+		"card count of 0"
+	);
+
+	[TestMethod]
+	public void GooValueSellAcceptsOfferAboveValue() {
+		CompiledTradeRule rule = CompileSingle(SellBackgroundsForGooJson);
+		Asset background = CreateAsset(EAssetType.ProfileBackground, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 41);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [gems], [background], gooValue: BackgroundGoo(40)));
+	}
+
+	[TestMethod]
+	public void GooValueSellRejectsOfferAtValue() {
+		CompiledTradeRule rule = CompileSingle(SellBackgroundsForGooJson);
+		Asset background = CreateAsset(EAssetType.ProfileBackground, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 40);
+
+		// Steam values accept only strictly better offers unless the rule asks otherwise.
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [gems], [background], gooValue: BackgroundGoo(40)));
+	}
+
+	[TestMethod]
+	public void GooValueSellAcceptsOfferAtValueWhenNotStrict() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": {
+					"TheirItems": { "Types": ["SteamGems"] },
+					"MyItems": { "Types": ["ProfileBackground"] }
+				},
+				"Value": { "GooTypes": ["ProfileBackground"], "Direction": "Sell", "Strict": false }
+			}
+			"""
+		);
+
+		Asset background = CreateAsset(EAssetType.ProfileBackground, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 40);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [gems], [background], gooValue: BackgroundGoo(40)));
+	}
+
+	[TestMethod]
+	public void GooValueOnlyAppliesToConfiguredTypes() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Value": { "GooTypes": ["ProfileBackground"], "Direction": "Sell" }
+			}
+			"""
+		);
+
+		Asset background = CreateAsset(EAssetType.ProfileBackground, realAppID: 440);
+		Asset emoticon = CreateAsset(EAssetType.Emoticon, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 1000);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [gems], [background], gooValue: BackgroundGoo(40)));
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [gems], [emoticon], gooValue: BackgroundGoo(40)));
+	}
+
+	[TestMethod]
+	public void GooValueAllCoversEveryItemType() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Value": { "GooTypes": ["All"], "Direction": "Sell" }
+			}
+			"""
+		);
+
+		Asset emoticon = CreateAsset(EAssetType.Emoticon, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 41);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [gems], [emoticon], gooValue: _ => 40ul));
+	}
+
+	[TestMethod]
+	public void UnknownGooValueDoesNotMatch() {
+		CompiledTradeRule rule = CompileSingle(SellBackgroundsForGooJson);
+		Asset background = CreateAsset(EAssetType.ProfileBackground, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 1000);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [gems], [background], gooValue: _ => null));
+	}
+
+	[TestMethod]
+	public void ItemPricesMatchAtExactValue() {
+		CompiledTradeRule rule = CompileSingle(ItemPriceJson);
+		Asset backgrounds = CreateAsset(EAssetType.ProfileBackground, amount: 10, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 30);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [backgrounds], [gems]));
+	}
+
+	[TestMethod]
+	public void ItemPricesAcceptBetterOffers() {
+		CompiledTradeRule rule = CompileSingle(ItemPriceJson);
+		Asset backgrounds = CreateAsset(EAssetType.ProfileBackground, amount: 10, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 100);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [backgrounds], [gems]));
+	}
+
+	[TestMethod]
+	public void ItemPricesRejectLowerOffers() {
+		CompiledTradeRule rule = CompileSingle(ItemPriceJson);
+		Asset backgrounds = CreateAsset(EAssetType.ProfileBackground, amount: 10, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 29);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [backgrounds], [gems]));
+	}
+
+	[TestMethod]
+	public void ItemPriceAppIDFilterNarrowsThePrice() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"ItemPrices": [ { "Type": "TradingCard", "AppIDs": [440], "Gems": 5 } ]
+			}
+			"""
+		);
+
+		Asset tf2Cards = CreateAsset(EAssetType.TradingCard, amount: 4, realAppID: 440);
+		Asset csCards = CreateAsset(EAssetType.TradingCard, amount: 4, realAppID: 730);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 20);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [tf2Cards], [gems]));
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [csCards], [gems]));
+	}
+
+	[TestMethod]
+	public void ValueFactorRaisesTheRequiredValue() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": {
+					"TheirItems": { "Types": ["ProfileBackground"] },
+					"MyItems": { "Types": ["SteamGems"] }
+				},
+				"ItemPrices": [ { "Type": "ProfileBackground", "Gems": 3 } ],
+				"Value": { "Factor": 2 }
+			}
+			"""
+		);
+
+		Asset backgrounds = CreateAsset(EAssetType.ProfileBackground, amount: 10, realAppID: 440);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [backgrounds], [CreateAsset(EAssetType.SteamGems, amount: 59)]));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [backgrounds], [CreateAsset(EAssetType.SteamGems, amount: 60)]));
+	}
+
+	[TestMethod]
+	public void ValueOffsetRaisesTheRequiredValue() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": {
+					"TheirItems": { "Types": ["ProfileBackground"] },
+					"MyItems": { "Types": ["SteamGems"] }
+				},
+				"ItemPrices": [ { "Type": "ProfileBackground", "Gems": 3 } ],
+				"Value": { "Offset": 5 }
+			}
+			"""
+		);
+
+		Asset backgrounds = CreateAsset(EAssetType.ProfileBackground, amount: 10, realAppID: 440);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [backgrounds], [CreateAsset(EAssetType.SteamGems, amount: 34)]));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [backgrounds], [CreateAsset(EAssetType.SteamGems, amount: 35)]));
+	}
+
+	[TestMethod]
+	public void SellDirectionRequiresPaymentForWhatIsGiven() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": {
+					"TheirItems": { "Types": ["SteamGems"] },
+					"MyItems": { "Types": ["ProfileBackground"] }
+				},
+				"ItemPrices": [ { "Type": "ProfileBackground", "Gems": 3 } ],
+				"Value": { "Direction": "Sell" }
+			}
+			"""
+		);
+
+		Asset backgrounds = CreateAsset(EAssetType.ProfileBackground, amount: 10, realAppID: 440);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [CreateAsset(EAssetType.SteamGems, amount: 29)], [backgrounds]));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [CreateAsset(EAssetType.SteamGems, amount: 30)], [backgrounds]));
+	}
+
+	[TestMethod]
+	public void UnpriceableExtrasMakeTheOfferNotMatch() {
+		CompiledTradeRule rule = CompileSingle(ItemPriceJson);
+		Asset backgrounds = CreateAsset(EAssetType.ProfileBackground, amount: 10, realAppID: 440);
+		Asset gems = CreateAsset(EAssetType.SteamGems, amount: 30);
+		Asset emoticon = CreateAsset(EAssetType.Emoticon);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [backgrounds], [gems, emoticon]));
+	}
+
+	[TestMethod]
+	public void MarketProfitFlatMarginIsSatisfied() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 5 } }""");
+		Asset received = CreateAsset(EAssetType.TradingCard);
+		Asset given = CreateAsset(EAssetType.BoosterPack);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [received], [given], marketPrice: MarketPrices(received, 10m, given, 4m)));
+	}
+
+	[TestMethod]
+	public void MarketProfitFlatMarginRejectsThinProfit() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 5 } }""");
+		Asset received = CreateAsset(EAssetType.TradingCard);
+		Asset given = CreateAsset(EAssetType.BoosterPack);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [received], [given], marketPrice: MarketPrices(received, 10m, given, 6m)));
+	}
+
+	[TestMethod]
+	public void MarketProfitPercentMarginIsSatisfied() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfitPercent": 10 } }""");
+		Asset received = CreateAsset(EAssetType.TradingCard);
+		Asset given = CreateAsset(EAssetType.BoosterPack);
+
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [received], [given], marketPrice: MarketPrices(received, 110m, given, 100m)));
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [received], [given], marketPrice: MarketPrices(received, 109m, given, 100m)));
+	}
+
+	[TestMethod]
+	public void MarketProfitRequiresBothMargins() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 5, "MinProfitPercent": 50 } }""");
+		Asset received = CreateAsset(EAssetType.TradingCard);
+		Asset given = CreateAsset(EAssetType.BoosterPack);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [received], [given], marketPrice: MarketPrices(received, 149m, given, 100m)));
+		Assert.IsTrue(TradeMatcher.IsMatch(rule, [received], [given], marketPrice: MarketPrices(received, 150m, given, 100m)));
+	}
+
+	[TestMethod]
+	public void MarketProfitRejectsThinMarkets() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 1 } }""");
+		Asset received = CreateAsset(EAssetType.TradingCard);
+		Asset given = CreateAsset(EAssetType.BoosterPack);
+
+		Func<Asset, MarketQuote?> prices = item => item == received ? new MarketQuote(100m, 5) : new MarketQuote(1m, 5);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [received], [given], marketPrice: prices));
+	}
+
+	[TestMethod]
+	public void MarketProfitRejectsPricesAboveTheUnitCap() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 1, "MaxUnitPrice": 100 } }""");
+		Asset received = CreateAsset(EAssetType.TradingCard);
+		Asset given = CreateAsset(EAssetType.BoosterPack);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [received], [given], marketPrice: MarketPrices(received, 500m, given, 1m)));
+	}
+
+	[TestMethod]
+	public void MarketProfitRejectsItemsWithoutAPrice() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 1 } }""");
+		Asset received = CreateAsset(EAssetType.TradingCard);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [received], [], marketPrice: _ => null));
+	}
+
+	[TestMethod]
+	public void MarketProfitWithoutAPriceLookupDoesNotMatch() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 1 } }""");
+
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [CreateAsset(EAssetType.TradingCard)], []));
+	}
+
+	[TestMethod]
+	public void MarketPriceTextIsParsed() {
+		Assert.IsTrue(MarketPriceResolver.TryParsePrice("$1.23", out decimal dollars));
+		Assert.AreEqual(1.23m, dollars);
+
+		Assert.IsTrue(MarketPriceResolver.TryParsePrice("1,23€", out decimal euros));
+		Assert.AreEqual(1.23m, euros);
+
+		Assert.IsTrue(MarketPriceResolver.TryParsePrice("$1,234.56", out decimal thousands));
+		Assert.AreEqual(1234.56m, thousands);
+
+		Assert.IsTrue(MarketPriceResolver.TryParsePrice("$0.03", out decimal cents));
+		Assert.AreEqual(0.03m, cents);
+
+		Assert.IsFalse(MarketPriceResolver.TryParsePrice("free", out _));
+		Assert.IsFalse(MarketPriceResolver.TryParsePrice(null, out _));
+	}
+
+	[TestMethod]
+	public void MarketVolumeTextIsParsed() {
+		Assert.AreEqual(15462u, MarketPriceResolver.ParseVolume("15,462"));
+		Assert.AreEqual(0u, MarketPriceResolver.ParseVolume(null));
+	}
+
+	[TestMethod]
+	public void UnknownValueDirectionIsRejected() => AssertCompileFails(
+		"""{ "Type": "Accept", "Value": { "Direction": "Give" } }""",
+		"'Value.Direction' contains unknown value"
+	);
+
+	[TestMethod]
+	public void NegativeMarketMarginIsRejected() => AssertCompileFails(
+		"""{ "Type": "Accept", "MarketProfit": { "MinProfit": -1 } }""",
+		"'MarketProfit.MinProfit' must not be negative"
+	);
+
+	[TestMethod]
+	public void MarketProfitWithoutMarginIsRejected() => AssertCompileFails(
+		"""{ "Type": "Accept", "MarketProfit": { "MinVolume": 5 } }""",
+		"'MarketProfit' needs 'MinProfit' or 'MinProfitPercent' greater than zero"
+	);
+
+	[TestMethod]
+	public void InvalidMarketCurrencyIsRejected() => AssertCompileFails(
+		"""{ "Type": "Accept", "MarketProfit": { "MinProfit": 1, "Currency": 0 } }""",
+		"'MarketProfit.Currency' must be greater than zero"
+	);
+
+	[TestMethod]
+	public void UnknownGooItemTypeIsRejected() => AssertCompileFails(
+		"""{ "Type": "Accept", "Value": { "GooTypes": ["Gizmo"] } }""",
+		"'Value.GooTypes' contains unknown item type"
+	);
+
+	[TestMethod]
+	public void DuplicateGooItemTypeIsRejected() => AssertCompileFails(
+		"""{ "Type": "Accept", "Value": { "GooTypes": ["ProfileBackground", "profile background"] } }""",
+		"'Value.GooTypes' contains more than one entry"
+	);
+
+	[TestMethod]
+	public void NonPositiveValueFactorIsRejected() => AssertCompileFails(
+		"""{ "Type": "Accept", "Value": { "Factor": 0 } }""",
+		"'Value.Factor' must be greater than zero"
+	);
+
+	[TestMethod]
+	public void ReadmeExampleRulesCompile() {
+		string? readmePath = FindReadme();
+
+		if (readmePath == null) {
+			Assert.Inconclusive("README.md could not be found next to the test binaries.");
+
+			return;
+		}
+
+		string[] lines = File.ReadAllLines(readmePath);
+		int start = Array.FindIndex(lines, static line => line.Trim() == "```json");
+
+		Assert.IsGreaterThanOrEqualTo(0, start, "README.md does not contain a json code block.");
+
+		int end = Array.FindIndex(lines, start + 1, static line => line.Trim() == "```");
+
+		Assert.IsGreaterThan(start, end, "The json code block in README.md is not closed.");
+
+		string json = string.Join('\n', lines[(start + 1)..end]);
+
+		using JsonDocument document = JsonDocument.Parse(json);
+
+		PluginConfig? config = document.RootElement.GetProperty("TradeManagerPlus").ToJsonObject<PluginConfig>();
+
+		Assert.IsNotNull(config);
+		Assert.IsNotNull(config.TradeRules);
+
+		foreach (TradeRuleConfig ruleConfig in config.TradeRules) {
+			Assert.IsTrue(RuleCompiler.TryCompile(ruleConfig, out _, out string? error), $"The README example rule \"{ruleConfig.Description}\" does not compile: {error}");
+		}
+	}
+
+	private static string? FindReadme() {
+		DirectoryInfo? directory = new(AppContext.BaseDirectory);
+
+		while (directory != null) {
+			string candidate = Path.Combine(directory.FullName, "README.md");
+
+			if (File.Exists(candidate)) {
+				return candidate;
+			}
+
+			directory = directory.Parent;
+		}
+
+		return null;
+	}
+
+	private static Func<Asset, ulong?> BackgroundGoo(ulong value) => item => item.Type == EAssetType.ProfileBackground ? value : null;
+
+	private static Func<Asset, MarketQuote?> MarketPrices(Asset received, decimal receivedPrice, Asset given, decimal givenPrice) => item => {
+		if (item == received) {
+			return new MarketQuote(receivedPrice, 50);
+		}
+
+		return item == given ? new MarketQuote(givenPrice, 50) : null;
+	};
+
 	private static void AssertCompileFails(string ruleJson, string expectedErrorFragment) {
 		PluginConfig config = ParseConfig(ruleJson);
 		TradeRuleConfig ruleConfig = config.TradeRules!.Single();
@@ -252,8 +1011,8 @@ public sealed class TradeMatcherTests {
 		return config!;
 	}
 
-	private static Asset CreateAsset(EAssetType type, EAssetRarity rarity = EAssetRarity.Common, uint amount = 1) {
-		InventoryDescription description = new(appID: Asset.SteamAppID, classID: 1, realAppID: Asset.SteamAppID, type: type, rarity: rarity);
+	private static Asset CreateAsset(EAssetType type, EAssetRarity rarity = EAssetRarity.Common, uint amount = 1, uint realAppID = Asset.SteamAppID) {
+		InventoryDescription description = new(appID: Asset.SteamAppID, classID: 1, realAppID: realAppID, type: type, rarity: rarity);
 
 		return new Asset(Asset.SteamAppID, Asset.SteamCommunityContextID, classID: 1, amount, description);
 	}

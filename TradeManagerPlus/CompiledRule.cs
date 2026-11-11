@@ -20,22 +20,55 @@ internal enum TradeRuleLogic : byte {
 /// </summary>
 internal sealed class CompiledItemConditions {
 	public HashSet<uint> AppIDs { get; } = [];
+	public HashSet<uint> ExcludedAppIDs { get; } = [];
 	public HashSet<EAssetType> Types { get; } = [];
 	public HashSet<EAssetRarity> Rarities { get; } = [];
+	public HashSet<byte> SetSizes { get; } = [];
+	public HashSet<string> Names { get; } = new(StringComparer.OrdinalIgnoreCase);
 	public uint MinAmount { get; init; }
 	public uint MaxAmount { get; init; } = uint.MaxValue;
 
 	/// <summary>
 	///     True when this side has no constraints at all, in which case it matches anything.
 	/// </summary>
-	internal bool IsEmpty => (AppIDs.Count == 0) && (Types.Count == 0) && (Rarities.Count == 0) && (MinAmount == 0) && (MaxAmount == uint.MaxValue);
+	internal bool IsEmpty => (AppIDs.Count == 0) && (ExcludedAppIDs.Count == 0) && (Types.Count == 0) && (Rarities.Count == 0) && (SetSizes.Count == 0) && (Names.Count == 0) && (MinAmount == 0) && (MaxAmount == uint.MaxValue);
 
 	/// <summary>
 	///     True when this side has no per-item constraints, only an amount constraint.
 	/// </summary>
-	internal bool HasNoItemFilters => (AppIDs.Count == 0) && (Types.Count == 0) && (Rarities.Count == 0);
+	internal bool HasNoItemFilters => (AppIDs.Count == 0) && (ExcludedAppIDs.Count == 0) && (Types.Count == 0) && (Rarities.Count == 0) && (SetSizes.Count == 0) && (Names.Count == 0);
 
-	internal bool MatchesItem(Asset item) => ((AppIDs.Count == 0) || AppIDs.Contains(item.RealAppID)) && ((Types.Count == 0) || Types.Contains(item.Type)) && ((Rarities.Count == 0) || Rarities.Contains(item.Rarity));
+	/// <summary>
+	///     Matches a single item. <paramref name="cardSetSizes" /> maps a game's AppID to the number of cards in its Steam
+	///     card set and is only required when this side constrains <see cref="SetSizes" />.
+	/// </summary>
+	internal bool MatchesItem(Asset item, IReadOnlyDictionary<uint, byte>? cardSetSizes) =>
+		((AppIDs.Count == 0) || AppIDs.Contains(item.RealAppID))
+		&& !ExcludedAppIDs.Contains(item.RealAppID)
+		&& ((Types.Count == 0) || Types.Contains(item.Type))
+		&& ((Rarities.Count == 0) || Rarities.Contains(item.Rarity))
+		&& MatchesName(item)
+		&& MatchesCardSetSize(item, cardSetSizes);
+
+	private bool MatchesName(Asset item) {
+		if (Names.Count == 0) {
+			return true;
+		}
+
+		string? marketHashName = item.Description?.MarketHashName;
+		string? name = item.Description?.Name;
+
+		return ((marketHashName != null) && Names.Contains(marketHashName)) || ((name != null) && Names.Contains(name));
+	}
+
+	private bool MatchesCardSetSize(Asset item, IReadOnlyDictionary<uint, byte>? cardSetSizes) {
+		if (SetSizes.Count == 0) {
+			return true;
+		}
+
+		// An unknown card set size never matches: we cannot prove that the item comes from the requested set.
+		return (cardSetSizes != null) && cardSetSizes.TryGetValue(item.RealAppID, out byte setSize) && SetSizes.Contains(setSize);
+	}
 
 	internal string Describe() {
 		if (IsEmpty) {
@@ -48,12 +81,24 @@ internal sealed class CompiledItemConditions {
 			parts.Add($"appIDs {string.Join(", ", AppIDs.Order())}");
 		}
 
+		if (ExcludedAppIDs.Count > 0) {
+			parts.Add($"excluded appIDs {string.Join(", ", ExcludedAppIDs.Order())}");
+		}
+
 		if (Types.Count > 0) {
 			parts.Add($"types {string.Join(", ", Types.Order().Select(static type => type.ToString()))}");
 		}
 
 		if (Rarities.Count > 0) {
 			parts.Add($"rarities {string.Join(", ", Rarities.Order().Select(static rarity => rarity.ToString()))}");
+		}
+
+		if (SetSizes.Count > 0) {
+			parts.Add($"card set sizes {string.Join(", ", SetSizes.Order())}");
+		}
+
+		if (Names.Count > 0) {
+			parts.Add($"names {string.Join(", ", Names.Order(StringComparer.OrdinalIgnoreCase))}");
 		}
 
 		if ((MinAmount > 0) || (MaxAmount < uint.MaxValue)) {
@@ -70,6 +115,143 @@ internal sealed class CompiledTradeRule {
 	public required CompiledItemConditions TheirItems { get; init; }
 	public required CompiledItemConditions MyItems { get; init; }
 	public string Description { get; init; } = string.Empty;
+
+	/// <summary>
+	///     Gems that have to be paid for every item received, or <c>0</c> when the rule does not price the trade.
+	/// </summary>
+	public uint GemsPerCard { get; init; }
+
+	/// <summary>
+	///     Gems per card keyed by card set size, sorted by set size. Empty when the rule does not price by set size.
+	/// </summary>
+	public IReadOnlyList<KeyValuePair<byte, uint>> GemPrices { get; init; } = [];
+
+	/// <summary>
+	///     How many cards an item type counts as. Card types are always worth one card, even when not listed here.
+	/// </summary>
+	public IReadOnlyDictionary<EAssetType, uint> CardEquivalents { get; init; } = new Dictionary<EAssetType, uint>();
+
+	/// <summary>
+	///     Gem value of a single unit of specific items, in the order they were configured. The first matching entry wins.
+	/// </summary>
+	public IReadOnlyList<CompiledItemPrice> ItemPrices { get; init; } = [];
+
+	/// <summary>
+	///     Multiplier applied to the value of the items the bot gives before it is compared with the value it receives.
+	/// </summary>
+	public decimal ValueFactor { get; init; } = 1;
+
+	/// <summary>
+	///     Value added to the items the bot gives before it is compared with the value it receives.
+	/// </summary>
+	public decimal ValueOffset { get; init; }
+
+	/// <summary>
+	///     True when Steam's own gem ("goo") value may be read for items without a configured price.
+	/// </summary>
+	public HashSet<EAssetType> GooTypes { get; init; } = [];
+
+	/// <summary>
+	///     True when Steam's own gem value may be read for every item type.
+	/// </summary>
+	public bool GooAllTypes { get; init; }
+
+	/// <summary>
+	///     True when the value received has to be strictly greater than the value the bot gives.
+	/// </summary>
+	public bool ValueStrict { get; init; }
+
+	/// <summary>
+	///     True when the bot pays for what it receives, so the value given has to cover the value received. False when the
+	///     bot is paid for what it gives, so the value received has to cover the value given.
+	/// </summary>
+	public bool ValueBuy { get; init; } = true;
+
+	/// <summary>
+	///     True when the rule compares the value of both sides instead of only checking the item conditions.
+	/// </summary>
+	internal bool HasValueRequirement => (GemsPerCard > 0) || (GemPrices.Count > 0) || (ItemPrices.Count > 0) || GooAllTypes || (GooTypes.Count > 0);
+
+	/// <summary>
+	///     Flat market profit the trade has to be worth before the rule matches.
+	/// </summary>
+	public decimal MarketMinProfit { get; init; }
+
+	/// <summary>
+	///     Market profit as a percentage of the value given that the trade has to be worth before the rule matches.
+	/// </summary>
+	public decimal MarketMinProfitPercent { get; init; }
+
+	/// <summary>
+	///     Steam currency ID used for the market price lookups.
+	/// </summary>
+	public int MarketCurrency { get; init; } = 1;
+
+	/// <summary>
+	///     Units sold in the last 24 hours before a market price is trusted.
+	/// </summary>
+	public uint MarketMinVolume { get; init; } = 10;
+
+	/// <summary>
+	///     Highest trusted market price per unit, or <c>0</c> when any price is trusted.
+	/// </summary>
+	public decimal MarketMaxUnitPrice { get; init; }
+
+	/// <summary>
+	///     True when the rule requires the trade to be profitable on the Steam Community market.
+	/// </summary>
+	internal bool HasMarketRequirement => (MarketMinProfit > 0) || (MarketMinProfitPercent > 0);
+}
+
+/// <summary>
+///     A configured gem value for one kind of item, optionally narrowed down by type, AppID and exact name.
+/// </summary>
+internal sealed class CompiledItemPrice {
+	public EAssetType? Type { get; init; }
+	public HashSet<uint> AppIDs { get; } = [];
+	public HashSet<string> Names { get; } = new(StringComparer.OrdinalIgnoreCase);
+	public uint Gems { get; init; }
+
+	internal bool Matches(Asset item) {
+		if (Type.HasValue && (item.Type != Type.Value)) {
+			return false;
+		}
+
+		if ((AppIDs.Count > 0) && !AppIDs.Contains(item.RealAppID)) {
+			return false;
+		}
+
+		if (Names.Count > 0) {
+			string? marketHashName = item.Description?.MarketHashName;
+			string? name = item.Description?.Name;
+
+			if (((marketHashName == null) || !Names.Contains(marketHashName)) && ((name == null) || !Names.Contains(name))) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	internal string Describe() {
+		List<string> filters = [];
+
+		if (Type.HasValue) {
+			filters.Add(Type.Value.ToString());
+		}
+
+		if (AppIDs.Count > 0) {
+			filters.Add($"appIDs {string.Join(", ", AppIDs.Order())}");
+		}
+
+		if (Names.Count > 0) {
+			filters.Add($"names {string.Join(", ", Names.Order(StringComparer.OrdinalIgnoreCase))}");
+		}
+
+		string target = filters.Count > 0 ? string.Join(" ", filters) : "anything";
+
+		return $"{target} = {Gems} gem(s)";
+	}
 }
 
 /// <summary>
@@ -131,12 +313,246 @@ internal static class RuleCompiler {
 			return false;
 		}
 
+		List<KeyValuePair<byte, uint>> gemPrices = [];
+
+		if (config.GemPrices != null) {
+			foreach (GemPriceConfig gemPrice in config.GemPrices) {
+				if (gemPrice.SetSize == 0) {
+					error = "'GemPrices' contains an invalid card set size 0";
+
+					return false;
+				}
+
+				if (gemPrice.Gems == 0) {
+					error = $"'GemPrices' contains a price of 0 gems for card set size {gemPrice.SetSize}";
+
+					return false;
+				}
+
+				if (gemPrices.Any(entry => entry.Key == gemPrice.SetSize)) {
+					error = $"'GemPrices' contains more than one price for card set size {gemPrice.SetSize}";
+
+					return false;
+				}
+
+				gemPrices.Add(new KeyValuePair<byte, uint>(gemPrice.SetSize, gemPrice.Gems));
+			}
+
+			gemPrices.Sort(static (left, right) => left.Key.CompareTo(right.Key));
+		}
+
+		if ((gemPrices.Count > 0) && ((config.GemsPerCard ?? 0) > 0)) {
+			error = "uses both 'GemsPerCard' and 'GemPrices'; use 'GemPrices' alone for per-set-size pricing";
+
+			return false;
+		}
+
+		Dictionary<EAssetType, uint> cardEquivalents = [];
+
+		if (config.CardEquivalents != null) {
+			foreach (CardEquivalentConfig equivalent in config.CardEquivalents) {
+				if (!EnumNameParser.TryParseAssetType(equivalent.Type, out EAssetType type)) {
+					error = $"'CardEquivalents' contains unknown item type '{equivalent.Type}'. Valid values: {EnumNameParser.AssetTypeNames}";
+
+					return false;
+				}
+
+				if (equivalent.Cards == 0) {
+					error = $"'CardEquivalents' contains a card count of 0 for '{equivalent.Type}'";
+
+					return false;
+				}
+
+				if (!cardEquivalents.TryAdd(type, equivalent.Cards)) {
+					error = $"'CardEquivalents' contains more than one entry for '{type}'";
+
+					return false;
+				}
+			}
+		}
+
+		List<CompiledItemPrice> itemPrices = [];
+
+		if (config.ItemPrices != null) {
+			foreach (ItemPriceConfig itemPrice in config.ItemPrices) {
+				if (itemPrice.Gems == 0) {
+					error = "'ItemPrices' contains a price of 0 gems";
+
+					return false;
+				}
+
+				EAssetType? type = null;
+
+				if (!string.IsNullOrWhiteSpace(itemPrice.Type)) {
+					if (!EnumNameParser.TryParseAssetType(itemPrice.Type, out EAssetType parsedType)) {
+						error = $"'ItemPrices' contains unknown item type '{itemPrice.Type}'. Valid values: {EnumNameParser.AssetTypeNames}";
+
+						return false;
+					}
+
+					type = parsedType;
+				}
+
+				CompiledItemPrice compiled = new() {
+					Type = type,
+					Gems = itemPrice.Gems
+				};
+
+				if (itemPrice.AppIDs != null) {
+					foreach (uint appID in itemPrice.AppIDs) {
+						if (appID == 0) {
+							error = "'ItemPrices' contains an invalid AppID 0";
+
+							return false;
+						}
+
+						compiled.AppIDs.Add(appID);
+					}
+				}
+
+				if (itemPrice.Names != null) {
+					foreach (string name in itemPrice.Names) {
+						if (string.IsNullOrWhiteSpace(name)) {
+							error = "'ItemPrices' contains an empty item name";
+
+							return false;
+						}
+
+						compiled.Names.Add(name.Trim());
+					}
+				}
+
+				// An entry without any filter would price every item in every trade, which is never what a user means.
+				if (!compiled.Type.HasValue && (compiled.AppIDs.Count == 0) && (compiled.Names.Count == 0)) {
+					error = "'ItemPrices' contains an entry without any 'Type', 'AppIDs' or 'Names'";
+
+					return false;
+				}
+
+				itemPrices.Add(compiled);
+			}
+		}
+
+		decimal valueFactor = config.Value?.Factor ?? 1;
+
+		if (valueFactor <= 0) {
+			error = $"'Value.Factor' must be greater than zero, but is {valueFactor}";
+
+			return false;
+		}
+
+		HashSet<EAssetType> gooTypes = [];
+		bool gooAllTypes = false;
+
+		if (config.Value?.GooTypes != null) {
+			foreach (string typeName in config.Value.GooTypes) {
+				if (string.IsNullOrWhiteSpace(typeName)) {
+					error = "'Value.GooTypes' contains an empty item type";
+
+					return false;
+				}
+
+				if (string.Equals(typeName.Trim(), "All", StringComparison.OrdinalIgnoreCase)) {
+					gooAllTypes = true;
+
+					continue;
+				}
+
+				if (!EnumNameParser.TryParseAssetType(typeName, out EAssetType gooType)) {
+					error = $"'Value.GooTypes' contains unknown item type '{typeName}'. Valid values: All, {EnumNameParser.AssetTypeNames}";
+
+					return false;
+				}
+
+				if (!gooTypes.Add(gooType)) {
+					error = $"'Value.GooTypes' contains more than one entry for '{gooType}'";
+
+					return false;
+				}
+			}
+		}
+
+		// Steam's value is a market estimate, so a rule that relies on it only takes a trade that is actually worth more.
+		// Configured prices are exact prices instead, which are paid to the gem.
+		bool valueStrict = config.Value?.Strict ?? (gooAllTypes || (gooTypes.Count > 0));
+
+		bool valueBuy = true;
+
+		if (!string.IsNullOrWhiteSpace(config.Value?.Direction)) {
+			string direction = config.Value.Direction.Trim();
+
+			if (string.Equals(direction, "Buy", StringComparison.OrdinalIgnoreCase)) {
+				valueBuy = true;
+			} else if (string.Equals(direction, "Sell", StringComparison.OrdinalIgnoreCase)) {
+				valueBuy = false;
+			} else {
+				error = $"'Value.Direction' contains unknown value '{direction}'. Valid values: Buy, Sell";
+
+				return false;
+			}
+		}
+
+		decimal marketMinProfit = config.MarketProfit?.MinProfit ?? 0;
+		decimal marketMinProfitPercent = config.MarketProfit?.MinProfitPercent ?? 0;
+
+		if (marketMinProfit < 0) {
+			error = $"'MarketProfit.MinProfit' must not be negative, but is {marketMinProfit}";
+
+			return false;
+		}
+
+		if (marketMinProfitPercent < 0) {
+			error = $"'MarketProfit.MinProfitPercent' must not be negative, but is {marketMinProfitPercent}";
+
+			return false;
+		}
+
+		// A market rule without a margin would accept every trade that is priced at all, including losing ones.
+		if ((config.MarketProfit != null) && (marketMinProfit == 0) && (marketMinProfitPercent == 0)) {
+			error = "'MarketProfit' needs 'MinProfit' or 'MinProfitPercent' greater than zero";
+
+			return false;
+		}
+
+		int marketCurrency = config.MarketProfit?.Currency ?? 1;
+
+		if (marketCurrency <= 0) {
+			error = $"'MarketProfit.Currency' must be greater than zero, but is {marketCurrency}";
+
+			return false;
+		}
+
+		uint marketMinVolume = config.MarketProfit?.MinVolume ?? 10;
+
+		decimal marketMaxUnitPrice = config.MarketProfit?.MaxUnitPrice ?? 0;
+
+		if (marketMaxUnitPrice < 0) {
+			error = $"'MarketProfit.MaxUnitPrice' must not be negative, but is {marketMaxUnitPrice}";
+
+			return false;
+		}
+
 		rule = new CompiledTradeRule {
 			Action = action,
 			Logic = logic,
 			TheirItems = theirItems,
 			MyItems = myItems,
-			Description = config.Description?.Trim() ?? string.Empty
+			Description = config.Description?.Trim() ?? string.Empty,
+			GemsPerCard = config.GemsPerCard ?? 0,
+			GemPrices = gemPrices,
+			CardEquivalents = cardEquivalents,
+			ItemPrices = itemPrices,
+			ValueFactor = valueFactor,
+			ValueOffset = config.Value?.Offset ?? 0,
+			GooTypes = gooTypes,
+			GooAllTypes = gooAllTypes,
+			ValueStrict = valueStrict,
+			ValueBuy = valueBuy,
+			MarketMinProfit = marketMinProfit,
+			MarketMinProfitPercent = marketMinProfitPercent,
+			MarketCurrency = marketCurrency,
+			MarketMinVolume = marketMinVolume,
+			MarketMaxUnitPrice = marketMaxUnitPrice
 		};
 
 		return true;
@@ -175,6 +591,18 @@ internal static class RuleCompiler {
 			}
 		}
 
+		if (config.ExcludedAppIDs != null) {
+			foreach (uint appID in config.ExcludedAppIDs) {
+				if (appID == 0) {
+					error = $"'{path}.ExcludedAppIDs' contains an invalid AppID 0";
+
+					return null;
+				}
+
+				result.ExcludedAppIDs.Add(appID);
+			}
+		}
+
 		if (config.Types != null) {
 			foreach (string typeName in config.Types) {
 				if (!EnumNameParser.TryParseAssetType(typeName, out EAssetType type)) {
@@ -196,6 +624,30 @@ internal static class RuleCompiler {
 				}
 
 				result.Rarities.Add(rarity);
+			}
+		}
+
+		if (config.SetSizes != null) {
+			foreach (byte setSize in config.SetSizes) {
+				if (setSize == 0) {
+					error = $"'{path}.SetSizes' contains an invalid card set size 0";
+
+					return null;
+				}
+
+				result.SetSizes.Add(setSize);
+			}
+		}
+
+		if (config.Names != null) {
+			foreach (string name in config.Names) {
+				if (string.IsNullOrWhiteSpace(name)) {
+					error = $"'{path}.Names' contains an empty item name";
+
+					return null;
+				}
+
+				result.Names.Add(name.Trim());
 			}
 		}
 
