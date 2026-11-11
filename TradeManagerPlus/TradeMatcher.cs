@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ArchiSteamFarm.Steam.Data;
 
 namespace TradeManagerPlus;
@@ -22,7 +23,10 @@ internal static class TradeMatcher {
 	/// <summary>
 	///     True when the rule constrains card set sizes, in which case the caller has to resolve them first.
 	/// </summary>
-	internal static bool NeedsCardSetSizes(CompiledTradeRule rule) => (rule.TheirItems.SetSizes.Count > 0) || (rule.MyItems.SetSizes.Count > 0) || (rule.GemPrices.Count > 0);
+	internal static bool NeedsCardSetSizes(CompiledTradeRule rule) =>
+		(rule.GemPrices.Count > 0)
+		|| rule.TheirItems.Any(static group => group.SetSizes.Count > 0)
+		|| rule.MyItems.Any(static group => group.SetSizes.Count > 0);
 
 	/// <summary>
 	///     True when matching the rule requires Steam's own gem values, which the caller has to prefetch.
@@ -229,7 +233,47 @@ internal static class TradeMatcher {
 		return result;
 	}
 
-	private static bool IsSideMatch(CompiledItemConditions conditions, IReadOnlyCollection<Asset> items, TradeRuleLogic logic, IReadOnlyDictionary<uint, byte>? cardSetSizes) {
+	/// <summary>
+	///     Matches one side of the trade against its condition groups.
+	/// </summary>
+	private static bool IsSideMatch(IReadOnlyList<CompiledItemConditions> conditions, IReadOnlyCollection<Asset> items, TradeRuleLogic logic, IReadOnlyDictionary<uint, byte>? cardSetSizes) {
+		if (conditions.Count == 0) {
+			return true;
+		}
+
+		// A side written as one condition keeps its original meaning exactly, including the amount window covering the whole
+		// side, so no configuration written before baskets existed can change behaviour.
+		if (conditions.Count == 1) {
+			return IsSingleConditionMatch(conditions[0], items, logic, cardSetSizes);
+		}
+
+		// 'Any' means the side has to look like at least one of the configured shapes.
+		if (logic == TradeRuleLogic.Any) {
+			return conditions.Any(group => IsGroupMatch(group, items, cardSetSizes));
+		}
+
+		// 'All' means every shape has to be present in its own amount, and every item has to belong to some shape, so a
+		// trade cannot smuggle in an item that no group asked for.
+		foreach (CompiledItemConditions group in conditions) {
+			if (!IsGroupMatch(group, items, cardSetSizes)) {
+				return false;
+			}
+		}
+
+		foreach (Asset item in items) {
+			if (!conditions.Any(group => group.MatchesItem(item, cardSetSizes))) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/// <summary>
+	///     Matches a side that has only one condition, with the amount window counted over every item on that side. This is
+	///     the behaviour the plugin had before condition lists existed.
+	/// </summary>
+	private static bool IsSingleConditionMatch(CompiledItemConditions conditions, IReadOnlyCollection<Asset> items, TradeRuleLogic logic, IReadOnlyDictionary<uint, byte>? cardSetSizes) {
 		if (conditions.IsEmpty) {
 			return true;
 		}
@@ -270,5 +314,35 @@ internal static class TradeMatcher {
 		}
 
 		return false;
+	}
+
+	/// <summary>
+	///     Matches a single condition group against a side. The amount window is checked over the items that belong to
+	///     this group only, so a basket can ask for one key and two cards from separate groups.
+	/// </summary>
+	private static bool IsGroupMatch(CompiledItemConditions group, IReadOnlyCollection<Asset> items, IReadOnlyDictionary<uint, byte>? cardSetSizes) {
+		if (group.IsEmpty) {
+			return true;
+		}
+
+		ulong matchedAmount = 0;
+		bool anyItem = false;
+
+		foreach (Asset item in items) {
+			if (!group.HasNoItemFilters && !group.MatchesItem(item, cardSetSizes)) {
+				continue;
+			}
+
+			anyItem = true;
+			matchedAmount += item.Amount;
+		}
+
+		// A group that filters items needs at least one item of that shape. An amount-only group is satisfied by an empty
+		// side as long as its window allows zero.
+		if (!anyItem && !group.HasNoItemFilters) {
+			return false;
+		}
+
+		return (matchedAmount >= group.MinAmount) && (matchedAmount <= group.MaxAmount);
 	}
 }

@@ -11,11 +11,12 @@
 TradeManagerPlus is a plugin for **[ArchiSteamFarm](https://github.com/JustArchiNET/ArchiSteamFarm)** that lets you accept or decline incoming Steam trade offers with your own rules, based on the items in the offer.
 
 > [!WARNING]
-> **Beta / test build, not finished.** The current releases are early builds for testing. They have not been validated against live Steam trades, and the ASF 7 build depends on a pre-release ASF version. Do not use them on a bot that holds items you cannot afford to lose. The ASF 6 build is the more tested one.
+> **Trade automation can lose items.** A plugin that accepts offers cannot know what you actually wanted to keep. Test new rules with small trades first, keep a `Decline` rule for items you never want to give away, and never run an untested configuration on a bot that holds items you cannot afford to lose. The ASF 7 build depends on a pre-release ASF version and may need an update before ASF 7 goes stable.
 
 ## Features
 
 - **Item-based rules**: match trades by AppID, item type, rarity, item name, card set size and total item amount, separately for the items you receive and the items you give.
+- **Baskets**: one side of a rule can list several item shapes, so a single rule can ask for "a key plus one card from a 5-card set plus one from an 8-card set" and price them together.
 - **Accept and Decline**: the first matching rule decides what happens to the offer.
 - **Gem pricing**: price cards by how many cards their set has, so a 5-card game and a 15-card game get different prices.
 - **Value comparison**: compare the gem value of both sides, using configured prices, Steam's own gem ("goo") values for backgrounds, emoticons and similar items, or a mix of both.
@@ -23,7 +24,7 @@ TradeManagerPlus is a plugin for **[ArchiSteamFarm](https://github.com/JustArchi
 - **Safe by default**: if no rule matches, ASF handles the offer exactly as it would without the plugin. Anything the plugin cannot price is treated as "unknown", never as zero, so an unpriceable item can never make a bad trade look good.
 - **Validation**: malformed rules are reported in the ASF log and skipped instead of breaking the plugin.
 - **Inspection**: `TMP STATUS` and `TMP RULES` commands show the loaded configuration.
-- **Automatic updates**: the plugin uses ASF's GitHub plugin update mechanism. Beta releases are intentionally published as pre-releases, so ASF does not offer them through the automatic update channel.
+- **Automatic updates**: the plugin uses ASF's GitHub plugin update mechanism, so ASF offers new releases on its own.
 
 ## How it interacts with ASF
 
@@ -37,15 +38,13 @@ If you need tighter control over all offers, combine this plugin with ASF's `Tra
 
 ## Installation
 
-1. Download the release asset that matches your ASF version from the **[beta releases page](https://github.com/killerboyyy777-agent/trademanagerplus/releases)**:
+1. Download the release asset that matches your ASF version from the **[releases page](https://github.com/killerboyyy777/trademanagerplus/releases)**:
    - ASF 6.3.11.7: `TradeManagerPlus.zip`
    - ASF 7.0.0.7: `TradeManagerPlus-V7.zip`
 2. Extract the archive into `plugins/TradeManagerPlus` inside your ASF directory, so that `TradeManagerPlus.dll` ends up in that folder.
 3. Restart ASF.
 
 The ASF 6 asset requires ASF 6.3.11.7 and .NET 10. The ASF 7 asset requires the ASF 7 pre-release (7.0.0.7) and .NET 11. ASF 7 support may change before ASF 7 goes stable.
-
-> Beta releases are published from the fork for testing and are not offered through ASF's automatic update channel. Stable releases will be published on the [main releases page](https://github.com/killerboyyy777/trademanagerplus/releases) once they are ready.
 
 ## Configuration
 
@@ -185,8 +184,8 @@ Add a top-level `TradeManagerPlus` property to your bot config (for example `con
 | `Enabled` | `true` | Set to `false` to disable the plugin for this bot without deleting the rules. |
 | `TradeRules` | `[]` | Ordered list of rules. The first rule that matches wins. |
 | `TradeRules[].Type` | required | `Accept` or `Decline`. |
-| `TradeRules[].Conditions` | empty | Conditions for `TheirItems` (you receive) and `MyItems` (you give). |
-| `TradeRules[].ConditionLogic` | `All` | `All`: every item on that side must match the filters. `Any`: at least one item must match. |
+| `TradeRules[].Conditions` | empty | Conditions for `TheirItems` (you receive) and `MyItems` (you give). Each side takes one condition object or a list of them (a "basket"). |
+| `TradeRules[].ConditionLogic` | `All` | `All`: every listed shape must be satisfied and every item must belong to some shape. `Any`: at least one shape must be satisfied. |
 | `TradeRules[].Description` | empty | Free-form text shown in the ASF log and in `TMP RULES`. |
 | `TradeRules[].GemsPerCard` | `0` | Flat price in Steam gems per card received. `0` disables pricing. Offers that pay more are accepted. Cannot be combined with `GemPrices`. |
 | `TradeRules[].GemPrices` | `[]` | Gem price per card, keyed by card set size: `[{ "SetSize": 8, "Gems": 43 }]`. See [Pricing cards](#pricing-cards). |
@@ -199,6 +198,8 @@ Add a top-level `TradeManagerPlus` property to your bot config (for example `con
 
 `TheirItems` and `MyItems` accept the same properties. Every property is optional; omitted properties do not restrict matching.
 
+Either side also accepts **a list** of condition objects instead of one object. A list describes a basket of different item shapes on one side, so a single rule can ask for a key and two cards from different card sets at once. The single-object form is the same thing with one entry.
+
 | Property | Description |
 | --- | --- |
 | `AppIDs` | List of real AppIDs the items must belong to, for example `[753]` for Steam inventory items. |
@@ -207,16 +208,42 @@ Add a top-level `TradeManagerPlus` property to your bot config (for example `con
 | `Rarities` | List of item rarities, same lenient naming. |
 | `Names` | List of exact item names, matched against both the market hash name and the plain name, ignoring case. Use it for items that type and AppID cannot tell apart, for example `Mann Co. Supply Crate Key`. |
 | `SetSizes` | List of Steam card set sizes the items must belong to, for example `[8]` for games whose set has 8 cards. See below. |
-| `MinAmount` | Minimum total quantity of items on this side. `0` means no minimum. |
-| `MaxAmount` | Maximum total quantity of items on this side. Omit for no maximum. |
+| `MinAmount` | Minimum total quantity of items in this condition. `0` means no minimum. |
+| `MaxAmount` | Maximum total quantity of items in this condition. Omit for no maximum. |
 
 **How a side is evaluated:**
 
-1. If the side has no properties at all, it matches anything, including an empty side.
-2. `MinAmount`/`MaxAmount` are checked against the total quantity of items on that side.
-3. If item filters (`AppIDs`, `ExcludedAppIDs`, `Types`, `Rarities`, `Names`, `SetSizes`) are present, `ConditionLogic` decides whether every item (`All`) or at least one item (`Any`) must satisfy all of them.
+1. A side without conditions, or with an empty condition object, matches anything, including an empty side.
+2. A side written as a single condition object behaves exactly as it always has: `MinAmount`/`MaxAmount` are checked against the total quantity of items on that side, and the filters then decide whether every item (`All`) or at least one item (`Any`) must match.
+3. In a list, each condition owns its items: `MinAmount`/`MaxAmount` are checked against the total quantity of items that satisfy that condition's own filters, not against the whole side.
+4. In a list, a condition whose filters match no item on the side fails, unless it has no item filters at all (amount-only conditions allow an empty side when `MinAmount` is `0`).
+5. `ConditionLogic` decides how the conditions of a list combine: `All` requires every condition to be satisfied **and** every item on the side to belong to at least one condition, so nothing can be slipped in. `Any` requires at least one condition to be satisfied.
+6. A list entry must describe some items; an entry with no properties is rejected when the list has more than one entry, because it would match anything and defeat the check above.
+
+An item can satisfy more than one condition, so overlapping entries count it for each of them. Keep the entries of a basket disjoint when you want distinct items of each shape.
 
 A rule matches only when **both** `TheirItems` and `MyItems` match.
+
+For example, this rule accepts a trade that contains a TF2 key, one card from a 5-card set and one card from an 8-card set — and nothing else — as long as the gems paid cover all three:
+
+```json
+{
+	"Type": "Accept",
+	"Conditions": {
+		"TheirItems": [
+			{ "AppIDs": [440], "Names": ["Mann Co. Supply Crate Key"], "MinAmount": 1, "MaxAmount": 1 },
+			{ "Types": ["TradingCard"], "SetSizes": [5], "MinAmount": 1, "MaxAmount": 1 },
+			{ "Types": ["TradingCard"], "SetSizes": [8], "MinAmount": 1, "MaxAmount": 1 }
+		],
+		"MyItems": { "Types": ["SteamGems"] }
+	},
+	"ItemPrices": [ { "Type": "Unknown", "AppIDs": [440], "Names": ["Mann Co. Supply Crate Key"], "Gems": 1500 } ],
+	"GemPrices": [ { "SetSize": 5, "Gems": 70 }, { "SetSize": 8, "Gems": 43 } ],
+	"Description": "Buy a TF2 key plus one card from a 5-card set and one from an 8-card set, paid in gems."
+}
+```
+
+With `ConditionLogic: "Any"` the same list would mean "a key, or a card from a 5-card set, or a card from an 8-card set".
 
 **About `SetSizes`:**
 

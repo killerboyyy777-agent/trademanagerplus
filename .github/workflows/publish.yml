@@ -226,8 +226,8 @@ jobs:
         artifacts: "out/*"
         bodyFile: .github/RELEASE_TEMPLATE.md
         immutableCreate: true
-        makeLatest: false
-        name: TradeManagerPlus V${{ github.ref_name }} (BETA / TEST - NOT FINISHED)
-        prerelease: true
+        makeLatest: ${{ !contains(github.ref_name, '-') }}
+        name: "TradeManagerPlus V${{ github.ref_name }}${{ contains(github.ref_name, '-') && ' (pre-release)' || '' }}"
+        prerelease: ${{ contains(github.ref_name, '-') }}
         token: ${{ secrets.GITHUB_TOKEN }}
         updateOnlyUnreleased: true

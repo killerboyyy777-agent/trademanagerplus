@@ -112,8 +112,17 @@ internal sealed class CompiledItemConditions {
 internal sealed class CompiledTradeRule {
 	public required TradeRuleAction Action { get; init; }
 	public required TradeRuleLogic Logic { get; init; }
-	public required CompiledItemConditions TheirItems { get; init; }
-	public required CompiledItemConditions MyItems { get; init; }
+
+	/// <summary>
+	///     Condition groups for the items the bot receives. Empty means the side is not constrained.
+	/// </summary>
+	public required IReadOnlyList<CompiledItemConditions> TheirItems { get; init; }
+
+	/// <summary>
+	///     Condition groups for the items the bot gives away. Empty means the side is not constrained.
+	/// </summary>
+	public required IReadOnlyList<CompiledItemConditions> MyItems { get; init; }
+
 	public string Description { get; init; } = string.Empty;
 
 	/// <summary>
@@ -301,13 +310,13 @@ internal static class RuleCompiler {
 				return false;
 		}
 
-		CompiledItemConditions? theirItems = CompileItemConditions(config.Conditions?.TheirItems, "TheirItems", out error);
+		IReadOnlyList<CompiledItemConditions>? theirItems = CompileItemConditions(config.Conditions?.TheirItems, "TheirItems", out error);
 
 		if (theirItems == null) {
 			return false;
 		}
 
-		CompiledItemConditions? myItems = CompileItemConditions(config.Conditions?.MyItems, "MyItems", out error);
+		IReadOnlyList<CompiledItemConditions>? myItems = CompileItemConditions(config.Conditions?.MyItems, "MyItems", out error);
 
 		if (myItems == null) {
 			return false;
@@ -556,6 +565,44 @@ internal static class RuleCompiler {
 		};
 
 		return true;
+	}
+
+	private static List<CompiledItemConditions>? CompileItemConditions(IReadOnlyList<ItemConditionsConfig>? config, string path, out string? error) {
+		error = null;
+
+		if (config == null) {
+			return [];
+		}
+
+		if (config.Count == 0) {
+			error = $"'{path}' is an empty list; remove it to leave that side unconstrained.";
+
+			return null;
+		}
+
+		List<CompiledItemConditions> result = [];
+
+		for (int index = 0; index < config.Count; index++) {
+			CompiledItemConditions? group = CompileItemConditions(config[index], $"{path}[{index}]", out string? groupError);
+
+			if (group == null) {
+				error = groupError;
+
+				return null;
+			}
+
+			// An entry without conditions would match every item and silently void the coverage check of a basket, so a
+			// list has to describe actual items in every entry. A single condition object is still allowed to be empty.
+			if ((config.Count > 1) && group.IsEmpty) {
+				error = $"'{path}[{index}]' has no conditions; every entry of a list has to describe some items.";
+
+				return null;
+			}
+
+			result.Add(group);
+		}
+
+		return result;
 	}
 
 	private static CompiledItemConditions? CompileItemConditions(ItemConditionsConfig? config, string path, out string? error) {
