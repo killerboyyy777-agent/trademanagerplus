@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -212,8 +213,77 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 		IReadOnlyCollection<Asset> itemsToReceive = tradeOffer.ItemsToReceiveReadOnly;
 		IReadOnlyCollection<Asset> itemsToGive = tradeOffer.ItemsToGiveReadOnly;
 
+		// Card set sizes are only fetched when a rule actually asks for them, and only for cards: other item types have
+		// no set size to compare against. Every lookup is cached per AppID.
+		IReadOnlyDictionary<uint, byte>? cardSetSizes = null;
+
+		if (ruleSet.Rules.Any(static rule => TradeMatcher.NeedsCardSetSizes(rule))) {
+			uint[] appIDs = [
+				.. itemsToReceive.Concat(itemsToGive)
+					.Where(static item => TradeMatcher.UsesCardSetSizes(item.Type))
+					.Select(static item => item.RealAppID)
+					.Where(static appID => appID > 0)
+					.Distinct()
+			];
+
+#if ASF7
+			cardSetSizes = await CardSetSizeResolver.ResolveAsync(bot, appIDs, cancellationToken).ConfigureAwait(false);
+#else
+			cardSetSizes = await CardSetSizeResolver.ResolveAsync(bot, appIDs, CancellationToken.None).ConfigureAwait(false);
+#endif
+		}
+
+		// Steam's own gem values are only read when a rule asks for them, and only for the item types those rules name.
+		Func<Asset, ulong?>? gooValue = null;
+
+		if (ruleSet.Rules.Any(static rule => TradeMatcher.NeedsGooValues(rule))) {
+			HashSet<EAssetType> gooTypes = [];
+			bool gooAllTypes = false;
+
+			foreach (CompiledTradeRule rule in ruleSet.Rules) {
+				if (rule.GooAllTypes) {
+					gooAllTypes = true;
+
+					break;
+				}
+
+				gooTypes.UnionWith(rule.GooTypes);
+			}
+
+			Asset[] candidates = [
+				.. itemsToReceive.Concat(itemsToGive).Where(item => gooAllTypes || gooTypes.Contains(item.Type))
+			];
+
+#if ASF7
+			gooValue = await GemValueResolver.ResolveAsync(bot, candidates, cancellationToken).ConfigureAwait(false);
+#else
+			gooValue = await GemValueResolver.ResolveAsync(bot, candidates, CancellationToken.None).ConfigureAwait(false);
+#endif
+		}
+
+		// Market prices are only read when a rule asks for them, in the currency that rule wants.
+		Dictionary<int, Func<Asset, MarketQuote?>?> marketPrices = [];
+
+		if (ruleSet.Rules.Any(static rule => TradeMatcher.NeedsMarketPrices(rule))) {
+			Asset[] candidates = [.. itemsToReceive.Concat(itemsToGive)];
+
+			foreach (int currency in ruleSet.Rules.Where(static rule => TradeMatcher.NeedsMarketPrices(rule)).Select(static rule => rule.MarketCurrency).Distinct()) {
+				if (marketPrices.ContainsKey(currency)) {
+					continue;
+				}
+
+#if ASF7
+				marketPrices[currency] = await MarketPriceResolver.ResolveAsync(bot, candidates, currency, cancellationToken).ConfigureAwait(false);
+#else
+				marketPrices[currency] = await MarketPriceResolver.ResolveAsync(bot, candidates, currency, CancellationToken.None).ConfigureAwait(false);
+#endif
+			}
+		}
+
 		foreach (CompiledTradeRule rule in ruleSet.Rules) {
-			if (!TradeMatcher.IsMatch(rule, itemsToReceive, itemsToGive)) {
+			Func<Asset, MarketQuote?>? marketPrice = rule.HasMarketRequirement && marketPrices.TryGetValue(rule.MarketCurrency, out Func<Asset, MarketQuote?>? resolvedMarketPrice) ? resolvedMarketPrice : null;
+
+			if (!TradeMatcher.IsMatch(rule, itemsToReceive, itemsToGive, cardSetSizes, gooValue, marketPrice)) {
 				continue;
 			}
 
@@ -317,7 +387,63 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 			CompiledTradeRule rule = ruleSet.Rules[i];
 
 			response.Append(Environment.NewLine).Append(i + 1).Append(". ").Append(rule.Action.ToString()).Append(": ").Append(string.IsNullOrWhiteSpace(rule.Description) ? "(no description)" : rule.Description);
-			response.Append(" [receive: ").Append(rule.TheirItems.Describe()).Append("; give: ").Append(rule.MyItems.Describe()).Append(']');
+			response.Append(" [receive: ").Append(rule.TheirItems.Describe()).Append("; give: ").Append(rule.MyItems.Describe());
+
+			if (rule.GemPrices.Count > 0) {
+				response.Append("; price: ").Append(string.Join(", ", rule.GemPrices.Select(static price => $"{price.Key}-card set = {price.Value} gems")));
+			} else if (rule.GemsPerCard > 0) {
+				response.Append("; price: ").Append(rule.GemsPerCard).Append(" gem(s) per received card");
+			}
+
+			if (rule.CardEquivalents.Count > 0) {
+				response.Append("; card equivalents: ").Append(string.Join(", ", rule.CardEquivalents.Select(static pair => $"{pair.Key} = {pair.Value} card(s)")));
+			}
+
+			if (rule.ItemPrices.Count > 0) {
+				response.Append("; item prices: ").Append(string.Join(", ", rule.ItemPrices.Select(static price => price.Describe())));
+			}
+
+			if (rule.GooAllTypes) {
+				response.Append("; steam values: all item types");
+			} else if (rule.GooTypes.Count > 0) {
+				response.Append("; steam values: ").Append(string.Join(", ", rule.GooTypes.Select(static type => type.ToString())));
+			}
+
+			if ((rule.ValueFactor != 1) || (rule.ValueOffset != 0)) {
+				response.Append("; value requirement: give x").Append(rule.ValueFactor.ToString(CultureInfo.InvariantCulture));
+
+				if (rule.ValueOffset > 0) {
+					response.Append(" + ").Append(rule.ValueOffset.ToString(CultureInfo.InvariantCulture));
+				} else if (rule.ValueOffset < 0) {
+					response.Append(" - ").Append((-rule.ValueOffset).ToString(CultureInfo.InvariantCulture));
+				}
+
+				response.Append(rule.ValueStrict ? ", accepted only when worth more" : ", or more");
+			}
+
+			if (rule.HasMarketRequirement) {
+				response.Append("; market profit: at least ");
+
+				if (rule.MarketMinProfit > 0) {
+					response.Append(rule.MarketMinProfit.ToString(CultureInfo.InvariantCulture)).Append(" currency ").Append(rule.MarketCurrency.ToString(CultureInfo.InvariantCulture));
+				}
+
+				if (rule.MarketMinProfitPercent > 0) {
+					if (rule.MarketMinProfit > 0) {
+						response.Append(" and ");
+					}
+
+					response.Append(rule.MarketMinProfitPercent.ToString(CultureInfo.InvariantCulture)).Append('%');
+				}
+
+				response.Append("; min volume: ").Append(rule.MarketMinVolume.ToString(CultureInfo.InvariantCulture));
+
+				if (rule.MarketMaxUnitPrice > 0) {
+					response.Append("; max unit price: ").Append(rule.MarketMaxUnitPrice.ToString(CultureInfo.InvariantCulture));
+				}
+			}
+
+			response.Append(']');
 		}
 
 		if (ruleSet.Rules.Count > shownRules) {
