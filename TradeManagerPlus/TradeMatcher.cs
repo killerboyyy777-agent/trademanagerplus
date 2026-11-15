@@ -111,10 +111,14 @@ internal static class TradeMatcher {
 			return false;
 		}
 
-		decimal percentProfit = giveValue * rule.MarketMinProfitPercent / 100m;
-		decimal requiredProfit = rule.MarketMinProfit > percentProfit ? rule.MarketMinProfit : percentProfit;
+		try {
+			decimal percentProfit = giveValue * rule.MarketMinProfitPercent / 100m;
+			decimal requiredProfit = rule.MarketMinProfit > percentProfit ? rule.MarketMinProfit : percentProfit;
 
-		return (receiveValue - giveValue) >= requiredProfit;
+			return (receiveValue - giveValue) >= requiredProfit;
+		} catch (OverflowException) {
+			return false;
+		}
 	}
 
 	private static bool TrySumMarketValue(CompiledTradeRule rule, IReadOnlyCollection<Asset> items, Func<Asset, MarketQuote?> marketPrice, out decimal total) {
@@ -135,7 +139,13 @@ internal static class TradeMatcher {
 				return false;
 			}
 
-			total += quote.Price * item.Amount;
+			try {
+				total = checked(total + (quote.Price * item.Amount));
+			} catch (OverflowException) {
+				total = 0;
+
+				return false;
+			}
 		}
 
 		return true;
