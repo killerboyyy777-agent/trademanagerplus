@@ -841,6 +841,20 @@ public sealed class TradeMatcherTests {
 	}
 
 	[TestMethod]
+	public void MarketProfitRejectsOverflowingMarketValues() {
+		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 1 } }""");
+		Asset received = CreateAsset(EAssetType.TradingCard, amount: uint.MaxValue);
+		Asset given = CreateAsset(EAssetType.BoosterPack, amount: uint.MaxValue);
+
+		Assert.IsFalse(TradeMatcher.IsMatch(
+			rule,
+			[received],
+			[given],
+			marketPrice: _ => new MarketQuote(decimal.MaxValue, 10)
+		));
+	}
+
+	[TestMethod]
 	public void MarketProfitRejectsItemsWithoutAPrice() {
 		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 1 } }""");
 		Asset received = CreateAsset(EAssetType.TradingCard);
