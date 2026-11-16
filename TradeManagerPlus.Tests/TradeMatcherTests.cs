@@ -855,6 +855,30 @@ public sealed class TradeMatcherTests {
 	}
 
 	[TestMethod]
+	public void ValueRuleRejectsAnUnrepresentablePrice() {
+		CompiledTradeRule rule = CompileSingle(
+			"""
+			{
+				"Type": "Accept",
+				"Conditions": {
+					"TheirItems": { "Types": ["SteamGems"] },
+					"MyItems": { "Types": ["ProfileBackground"] }
+				},
+				"ItemPrices": [ { "Type": "ProfileBackground", "Gems": 3 } ],
+				"Value": { "Direction": "Sell", "Factor": 10000000000000000000000000000 }
+			}
+			"""
+		);
+
+		Asset received = CreateAsset(EAssetType.SteamGems, amount: 100);
+		Asset given = CreateAsset(EAssetType.ProfileBackground, amount: 10);
+
+		// 10 backgrounds at 3 gems each, multiplied by a factor that cannot be represented: the rule has to reject the
+		// offer rather than throw out of the trade handler.
+		Assert.IsFalse(TradeMatcher.IsMatch(rule, [received], [given]));
+	}
+
+	[TestMethod]
 	public void MarketProfitRejectsItemsWithoutAPrice() {
 		CompiledTradeRule rule = CompileSingle("""{ "Type": "Accept", "MarketProfit": { "MinProfit": 1 } }""");
 		Asset received = CreateAsset(EAssetType.TradingCard);
