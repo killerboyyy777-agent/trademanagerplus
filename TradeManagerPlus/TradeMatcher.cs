@@ -77,17 +77,24 @@ internal static class TradeMatcher {
 
 		// A rule built on Steam's own values accepts only offers that are actually worth more, while a configured price is
 		// paid to the gem.
-		if (rule.ValueBuy) {
-			// The bot pays for what it receives, so the value it gives has to cover the price of the value it receives.
-			decimal price = (receiveValue.Value * rule.ValueFactor) + rule.ValueOffset;
+		// Item values come from Steam and from the offer itself, and a rule may carry a 'Value.Factor' or 'Value.Offset'
+		// that makes the arithmetic unrepresentable. An offer that cannot be priced safely never matches, instead of
+		// throwing out of the trade handler.
+		try {
+			if (rule.ValueBuy) {
+				// The bot pays for what it receives, so the value it gives has to cover the price of the value it receives.
+				decimal price = (receiveValue.Value * rule.ValueFactor) + rule.ValueOffset;
 
-			return rule.ValueStrict ? giveValue.Value > price : price <= giveValue.Value;
+				return rule.ValueStrict ? giveValue.Value > price : price <= giveValue.Value;
+			}
+
+			// The bot is paid for what it gives, so the value it receives has to cover the value it gives.
+			decimal requiredValue = (giveValue.Value * rule.ValueFactor) + rule.ValueOffset;
+
+			return rule.ValueStrict ? receiveValue.Value > requiredValue : requiredValue <= receiveValue.Value;
+		} catch (OverflowException) {
+			return false;
 		}
-
-		// The bot is paid for what it gives, so the value it receives has to cover the value it gives.
-		decimal requiredValue = (giveValue.Value * rule.ValueFactor) + rule.ValueOffset;
-
-		return rule.ValueStrict ? receiveValue.Value > requiredValue : requiredValue <= receiveValue.Value;
 	}
 
 	/// <summary>
