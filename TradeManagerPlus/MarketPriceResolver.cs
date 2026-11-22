@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -32,7 +31,7 @@ internal readonly record struct MarketQuote(decimal Price, uint Volume);
 /// </remarks>
 internal static class MarketPriceResolver {
 	private const int MaxLookupsPerOffer = 10;
-	private static readonly ConcurrentDictionary<PriceKey, CacheEntry> Cache = new();
+	private static readonly ExpiringCache<PriceKey, MarketQuote> Cache = new();
 	private static readonly SemaphoreSlim LookupSemaphore = new(1, 1);
 	private static readonly TimeSpan SuccessTTL = TimeSpan.FromHours(1);
 	private static readonly TimeSpan FailureTTL = TimeSpan.FromMinutes(30);
@@ -46,15 +45,29 @@ internal static class MarketPriceResolver {
 		ArgumentNullException.ThrowIfNull(items);
 
 		Dictionary<PriceKey, MarketQuote?> quotes = [];
+		int lookups = 0;
 
 		foreach (Asset item in items) {
-			if (quotes.Count >= MaxLookupsPerOffer) {
-				break;
-			}
-
 			if (!TryGetPriceKey(item, currency, out PriceKey key) || quotes.ContainsKey(key)) {
 				continue;
 			}
+
+			// A cached price costs no request, so it does not count against the per-offer budget.
+			if (Cache.TryGet(key, out MarketQuote? cachedQuote)) {
+				quotes[key] = cachedQuote;
+
+				continue;
+			}
+
+			if (lookups >= MaxLookupsPerOffer) {
+				if (ResolverDiagnostics.ShouldLogBudgetWarning(ResolverKind.MarketPrices, DateTime.UtcNow)) {
+					bot.ArchiLogger.LogGenericWarning("[TradeManagerPlus] Steam market lookup budget (10) reached; remaining items stay unpriced and rules needing them will not match. This warning is rate-limited.");
+				}
+
+				break;
+			}
+
+			lookups++;
 
 			quotes[key] = await GetQuoteAsync(bot, key, cancellationToken).ConfigureAwait(false);
 		}
@@ -143,8 +156,8 @@ internal static class MarketPriceResolver {
 	private static async Task<MarketQuote?> GetQuoteAsync(Bot bot, PriceKey key, CancellationToken cancellationToken) {
 		DateTime now = DateTime.UtcNow;
 
-		if (Cache.TryGetValue(key, out CacheEntry cached) && (cached.ExpiresUtc > now)) {
-			return cached.Quote;
+		if (Cache.TryGet(key, out MarketQuote? cachedQuote)) {
+			return cachedQuote;
 		}
 
 		await LookupSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -152,14 +165,14 @@ internal static class MarketPriceResolver {
 		try {
 			now = DateTime.UtcNow;
 
-			if (Cache.TryGetValue(key, out cached) && (cached.ExpiresUtc > now)) {
-				return cached.Quote;
+			if (Cache.TryGet(key, out cachedQuote)) {
+				return cachedQuote;
 			}
 
 			MarketQuote? quote = await FetchQuoteAsync(bot, key, cancellationToken).ConfigureAwait(false);
 
 			// A price is only cached for an hour, so a spike that was real for a moment cannot keep a rule accepting for days.
-			Cache[key] = new CacheEntry(quote, now + (quote.HasValue ? SuccessTTL : FailureTTL));
+			Cache.Set(key, quote, quote.HasValue ? SuccessTTL : FailureTTL);
 
 			return quote;
 		} finally {
@@ -219,8 +232,6 @@ internal static class MarketPriceResolver {
 	}
 
 	private readonly record struct PriceKey(uint AppID, string MarketHashName, int Currency);
-
-	private readonly record struct CacheEntry(MarketQuote? Quote, DateTime ExpiresUtc);
 
 	// ReSharper disable once ClassNeverInstantiated.Local
 #pragma warning disable CA1812 // Instantiated through JSON deserialization

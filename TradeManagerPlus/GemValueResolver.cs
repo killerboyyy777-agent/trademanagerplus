@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json.Serialization;
@@ -22,7 +21,7 @@ namespace TradeManagerPlus;
 /// </remarks>
 internal static class GemValueResolver {
 	private const int MaxLookupsPerOffer = 25;
-	private static readonly ConcurrentDictionary<GooKey, CacheEntry> Cache = new();
+	private static readonly ExpiringCache<GooKey, uint> Cache = new();
 	private static readonly SemaphoreSlim LookupSemaphore = new(1, 1);
 	private static readonly TimeSpan SuccessTTL = TimeSpan.FromDays(7);
 	private static readonly TimeSpan FailureTTL = TimeSpan.FromMinutes(30);
@@ -50,6 +49,10 @@ internal static class GemValueResolver {
 			}
 
 			if (lookups >= MaxLookupsPerOffer) {
+				if (ResolverDiagnostics.ShouldLogBudgetWarning(ResolverKind.GooValues, DateTime.UtcNow)) {
+					bot.ArchiLogger.LogGenericWarning("[TradeManagerPlus] Steam gem value lookup budget (25) reached; remaining items stay unpriced and rules needing them will not match. This warning is rate-limited.");
+				}
+
 				break;
 			}
 
@@ -156,8 +159,8 @@ internal static class GemValueResolver {
 	}
 
 	private static bool TryGetCachedValue(GooKey key, out uint? value) {
-		if (Cache.TryGetValue(key, out CacheEntry cached) && (cached.ExpiresUtc > DateTime.UtcNow)) {
-			value = cached.Value;
+		if (Cache.TryGet(key, out uint? cached)) {
+			value = cached;
 
 			return true;
 		}
@@ -168,21 +171,21 @@ internal static class GemValueResolver {
 	}
 
 	private static async Task<uint?> GetGooValueAsync(Bot bot, GooKey key, CancellationToken cancellationToken) {
-		if (Cache.TryGetValue(key, out CacheEntry cached) && (cached.ExpiresUtc > DateTime.UtcNow)) {
-			return cached.Value;
+		if (Cache.TryGet(key, out uint? cached)) {
+			return cached;
 		}
 
 		await LookupSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
 
 		try {
 			// Another offer may have resolved this item kind while we were waiting for the semaphore.
-			if (Cache.TryGetValue(key, out cached) && (cached.ExpiresUtc > DateTime.UtcNow)) {
-				return cached.Value;
+			if (Cache.TryGet(key, out cached)) {
+				return cached;
 			}
 
 			uint? value = await FetchGooValueAsync(bot, key, cancellationToken).ConfigureAwait(false);
 
-			Cache[key] = new CacheEntry(value, DateTime.UtcNow + (value.HasValue ? SuccessTTL : FailureTTL));
+			Cache.Set(key, value, value.HasValue ? SuccessTTL : FailureTTL);
 
 			return value;
 		} finally {
@@ -215,8 +218,6 @@ internal static class GemValueResolver {
 	}
 
 	private readonly record struct GooKey(uint AppID, byte ItemType, byte Border);
-
-	private readonly record struct CacheEntry(uint? Value, DateTime ExpiresUtc);
 
 	private sealed class GooValueResponse {
 		[JsonPropertyName("success")]

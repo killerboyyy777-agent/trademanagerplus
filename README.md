@@ -347,6 +347,18 @@ Steam can hold a trade for up to 15 days when the receiving account has no mobil
 
 `{ "MaxDays": 0 }` is the usual choice: it refuses escrowed trades and only accepts items that arrive immediately. Like every other requirement, an unknown hold never matches a rule that asks for one, so a failed lookup refuses the offer instead of accepting a hold you did not want.
 
+### Steam lookup limits
+
+Rules that need a Steam price, gem value or card set size look the missing values up per offer. To keep a large offer from stalling the trade handler, each lookup is capped per offer:
+
+| Lookup | Limit per offer |
+| --- | --- |
+| Steam market prices | 10 different items |
+| Steam gem values | 25 different item kinds |
+| Card set sizes | 15 different games |
+
+Already-cached values cost nothing and do not use up the budget. If a budget is reached while items are still left, those items stay unknown and any rule that needs them simply does not match; a warning naming the limit is written to the ASF log, rate-limited to once a minute per lookup type. Cached entries are kept for their freshness window (prices one hour, gem values and card set sizes seven days; failed lookups 30 minutes) and expired entries are pruned periodically, so a long-running bot does not retain them forever.
+
 ### Item types
 
 `BoosterPack`, `Emoticon`, `FoilTradingCard`, `ProfileBackground`, `TradingCard`, `SteamGems`, `SaleItem`, `Consumable`, `ProfileModifier`, `Sticker`, `ChatEffect`, `MiniProfileBackground`, `AvatarProfileFrame`, `AnimatedAvatar`, `KeyboardSkin`, `StartupVideo`, `Unknown`.

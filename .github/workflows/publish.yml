@@ -229,4 +229,4 @@ jobs:
         name: "TradeManagerPlus V${{ github.ref_name }}${{ contains(github.ref_name, '-') && ' (pre-release)' || '' }}"
         prerelease: ${{ contains(github.ref_name, '-') }}
         token: ${{ secrets.GITHUB_TOKEN }}
-        updateOnlyUnreleased: true
+        updateOnlyUnreleased: false

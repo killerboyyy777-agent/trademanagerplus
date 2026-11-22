@@ -1433,6 +1433,42 @@ public sealed class TradeMatcherTests {
 		AssertCompileFails("""{ "Type": "Accept", "TradeHold": { "MaxDays": 30 } }""", "must not be greater than 15");
 	}
 
+	[TestMethod]
+	public void ExpiringCacheKeepsLiveEntries() {
+		ExpiringCache<uint, byte> cache = new();
+		cache.Set(1, 5, TimeSpan.FromMinutes(10));
+
+		Assert.IsTrue(cache.TryGet(1, out byte? value));
+		Assert.AreEqual((byte) 5, value);
+		Assert.AreEqual(1, cache.Count);
+	}
+
+	[TestMethod]
+	public void ExpiringCachePrunesExpiredEntries() {
+		ExpiringCache<uint, byte> cache = new();
+		DateTime now = DateTime.UtcNow;
+		cache.Set(1, 5, TimeSpan.FromMinutes(10));
+		cache.Set(2, 8, TimeSpan.FromMinutes(-1));
+
+		Assert.AreEqual(1, cache.PruneExpired(now));
+		Assert.AreEqual(1, cache.Count);
+		Assert.IsTrue(cache.TryGet(1, out byte? value));
+		Assert.AreEqual((byte) 5, value);
+		Assert.IsFalse(cache.TryGet(2, out _));
+	}
+
+	[TestMethod]
+	public void BudgetWarningIsRateLimited() {
+		DateTime now = DateTime.UtcNow;
+
+		Assert.IsTrue(ResolverDiagnostics.ShouldLogBudgetWarning(ResolverKind.CardSetSizes, now));
+		Assert.IsFalse(ResolverDiagnostics.ShouldLogBudgetWarning(ResolverKind.CardSetSizes, now));
+		Assert.IsFalse(ResolverDiagnostics.ShouldLogBudgetWarning(ResolverKind.CardSetSizes, now.AddSeconds(30)));
+		Assert.IsTrue(ResolverDiagnostics.ShouldLogBudgetWarning(ResolverKind.CardSetSizes, now.AddMinutes(1)));
+		Assert.IsTrue(ResolverDiagnostics.ShouldLogBudgetWarning(ResolverKind.GooValues, now));
+		Assert.IsTrue(ResolverDiagnostics.ShouldLogBudgetWarning(ResolverKind.MarketPrices, now));
+	}
+
 	private static void AssertCompileFails(string ruleJson, string expectedErrorFragment) {
 		PluginConfig config = ParseConfig(ruleJson);
 		TradeRuleConfig ruleConfig = config.TradeRules!.Single();

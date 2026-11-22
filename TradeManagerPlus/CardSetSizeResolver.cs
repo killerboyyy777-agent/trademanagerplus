@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,7 +22,7 @@ namespace TradeManagerPlus;
 internal static class CardSetSizeResolver {
 	private const int MaxLookupsPerOffer = 15;
 
-	private static readonly ConcurrentDictionary<uint, CacheEntry> Cache = new();
+	private static readonly ExpiringCache<uint, byte> Cache = new();
 	private static readonly SemaphoreSlim LookupSemaphore = new(1, 1);
 	private static readonly TimeSpan SuccessTTL = TimeSpan.FromDays(7);
 	private static readonly TimeSpan FailureTTL = TimeSpan.FromMinutes(30);
@@ -34,9 +33,9 @@ internal static class CardSetSizeResolver {
 
 		foreach (uint appID in appIDs) {
 			// Values that are already cached cost nothing, so they do not count against the budget below.
-			if (Cache.TryGetValue(appID, out CacheEntry cachedEntry) && (cachedEntry.ExpiresUtc > DateTime.UtcNow)) {
-				if (cachedEntry.Size.HasValue) {
-					result[appID] = cachedEntry.Size.Value;
+			if (Cache.TryGet(appID, out byte? cachedEntry)) {
+				if (cachedEntry.HasValue) {
+					result[appID] = cachedEntry.Value;
 				}
 
 				continue;
@@ -46,6 +45,10 @@ internal static class CardSetSizeResolver {
 			// to hold the trade-offer callback for an unbounded time. Cards that were not looked up stay unknown and
 			// their rule simply does not match.
 			if (lookups >= MaxLookupsPerOffer) {
+				if (ResolverDiagnostics.ShouldLogBudgetWarning(ResolverKind.CardSetSizes, DateTime.UtcNow)) {
+					bot.ArchiLogger.LogGenericWarning("[TradeManagerPlus] Steam card set lookup budget (15) reached; remaining cards stay unknown and rules needing them will not match. This warning is rate-limited.");
+				}
+
 				break;
 			}
 
@@ -62,21 +65,21 @@ internal static class CardSetSizeResolver {
 	}
 
 	private static async Task<byte?> GetCardSetSizeAsync(Bot bot, uint appID, CancellationToken cancellationToken) {
-		if (Cache.TryGetValue(appID, out CacheEntry cached) && (cached.ExpiresUtc > DateTime.UtcNow)) {
-			return cached.Size;
+		if (Cache.TryGet(appID, out byte? cached)) {
+			return cached;
 		}
 
 		await LookupSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
 
 		try {
 			// Another offer may have resolved this AppID while we were waiting for the semaphore.
-			if (Cache.TryGetValue(appID, out cached) && (cached.ExpiresUtc > DateTime.UtcNow)) {
-				return cached.Size;
+			if (Cache.TryGet(appID, out cached)) {
+				return cached;
 			}
 
 			byte? setSize = await FetchCardSetSizeAsync(bot, appID, cancellationToken).ConfigureAwait(false);
 
-			Cache[appID] = new CacheEntry(setSize, DateTime.UtcNow + (setSize.HasValue ? SuccessTTL : FailureTTL));
+			Cache.Set(appID, setSize, setSize.HasValue ? SuccessTTL : FailureTTL);
 
 			return setSize;
 		} finally {
@@ -117,6 +120,4 @@ internal static class CardSetSizeResolver {
 			return (byte) cardCount;
 		}
 	}
-
-	private readonly record struct CacheEntry(byte? Size, DateTime ExpiresUtc);
 }
