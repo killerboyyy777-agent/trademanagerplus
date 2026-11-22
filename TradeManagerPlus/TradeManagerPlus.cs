@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Composition;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -34,6 +35,7 @@ internal sealed class BotRuleSet {
 }
 
 #pragma warning disable CA1812 // ASF instantiates this class during runtime
+[Export(typeof(IPlugin))]
 [UsedImplicitly]
 #if ASF7
 internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotCommand, IBotModules, IBotTradeOffer {
@@ -405,6 +407,12 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 		return Convert.ToInt32(bot.WalletCurrency, CultureInfo.InvariantCulture);
 	}
 
+	internal static string FormatValueOffset(decimal valueOffset) {
+		string digits = valueOffset.ToString(CultureInfo.InvariantCulture);
+
+		return valueOffset < 0 ? $" - {digits[1..]}" : $" + {digits}";
+	}
+
 	private static string FormatRules(Bot bot, BotRuleSet? ruleSet) {
 		if (ruleSet == null) {
 			return $"{PluginName} is not configured for {bot.BotName}.";
@@ -452,10 +460,8 @@ internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotC
 			if ((rule.ValueFactor != 1) || (rule.ValueOffset != 0)) {
 				response.Append("; value requirement: give x").Append(rule.ValueFactor.ToString(CultureInfo.InvariantCulture));
 
-				if (rule.ValueOffset > 0) {
-					response.Append(" + ").Append(rule.ValueOffset.ToString(CultureInfo.InvariantCulture));
-				} else if (rule.ValueOffset < 0) {
-					response.Append(" - ").Append((-rule.ValueOffset).ToString(CultureInfo.InvariantCulture));
+				if (rule.ValueOffset != 0) {
+					response.Append(FormatValueOffset(rule.ValueOffset));
 				}
 
 				response.Append(rule.ValueStrict ? ", accepted only when worth more" : ", or more");

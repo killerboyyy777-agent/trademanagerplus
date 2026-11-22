@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/killerboyyy777/trademanagerplus?logo=github&label=release)](https://github.com/killerboyyy777/trademanagerplus/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/killerboyyy777/trademanagerplus/total?logo=github&label=downloads)](https://github.com/killerboyyy777/trademanagerplus/releases)
 [![License](https://img.shields.io/github/license/killerboyyy777/trademanagerplus)](LICENSE.txt)
-[![ArchiSteamFarm](https://img.shields.io/badge/ArchiSteamFarm-6.3.11.7%20%7C%207.0.0.7-blue)](https://github.com/JustArchiNET/ArchiSteamFarm)
+[![ArchiSteamFarm](https://img.shields.io/badge/ArchiSteamFarm-6.3.11.7%20%7C%207.0.0.9-blue)](https://github.com/JustArchiNET/ArchiSteamFarm)
 
 [![Steam donate](https://img.shields.io/badge/Steam-donate-000000.svg?logo=steam)](https://steamcommunity.com/tradeoffer/new/?partner=1211192445&token=T9Hiu3Oz)
 [![BTC donate](https://img.shields.io/badge/BTC-donate-f7931a.svg?logo=bitcoin)](https://www.blockchain.com/explorer/addresses/btc/bc1qmkv939k2wqsej657cxj25ppwqdh65y2umnv3gg)
@@ -45,11 +45,11 @@ If you need tighter control over all offers, combine this plugin with ASF's `Tra
 
 1. Download the release asset that matches your ASF version from the **[releases page](https://github.com/killerboyyy777/trademanagerplus/releases)**:
    - ASF 6.3.11.7: `TradeManagerPlus.zip`
-   - ASF 7.0.0.7: `TradeManagerPlus-V7.zip`
+   - ASF 7.0.0.9: `TradeManagerPlus-V7.zip`
 2. Extract the archive into `plugins/TradeManagerPlus` inside your ASF directory, so that `TradeManagerPlus.dll` ends up in that folder.
 3. Restart ASF.
 
-The ASF 6 asset requires ASF 6.3.11.7 and .NET 10. The ASF 7 asset requires the ASF 7 pre-release (7.0.0.7) and .NET 11. ASF 7 support may change before ASF 7 goes stable.
+The ASF 6 asset requires ASF 6.3.11.7 and .NET 10. The ASF 7 asset requires the ASF 7 pre-release (7.0.0.9) and .NET 11. ASF 7.0.0.9 is a release candidate; ASF 7 support may change before the stable ASF 7 release.
 
 ## Configuration
 
@@ -388,8 +388,8 @@ The plugin is copied to `ArchiSteamFarm/ArchiSteamFarm/bin/Release/net10.0/plugi
 ASF 7 (.NET 11 SDK):
 
 ```sh
-git -C ArchiSteamFarm fetch origin tag 7.0.0.7 --no-tags
-git -C ArchiSteamFarm checkout 7.0.0.7
+git -C ArchiSteamFarm fetch origin tag 7.0.0.9 --no-tags
+git -C ArchiSteamFarm checkout 7.0.0.9
 git -C ArchiSteamFarm submodule update --init --recursive
 dotnet build -c Release -p:AsfMajor=7
 ```

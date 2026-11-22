@@ -1,12 +1,29 @@
 using System.Collections.Generic;
+using System.Composition;
 using System.Linq;
 using System.Text.Json;
+using ArchiSteamFarm.Plugins.Interfaces;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace TradeManagerPlus.Tests;
 
 [TestClass]
 public sealed class PluginConfigTests {
+	[TestMethod]
+	public void PluginIsExportedWithTheIPluginContract() {
+		ExportAttribute? export = typeof(TradeManagerPlusPlugin).GetCustomAttributes(typeof(ExportAttribute), inherit: false).OfType<ExportAttribute>().SingleOrDefault();
+
+		Assert.IsNotNull(export);
+		Assert.AreEqual(typeof(IPlugin), export!.ContractType);
+	}
+
+	[TestMethod]
+	public void MinimumDecimalValueOffsetCanBeFormattedWithoutOverflow() {
+		Assert.AreEqual(" - 79228162514264337593543950335", TradeManagerPlusPlugin.FormatValueOffset(decimal.MinValue));
+		Assert.AreEqual(" + 12.5", TradeManagerPlusPlugin.FormatValueOffset(12.5m));
+		Assert.AreEqual(" - 12.5", TradeManagerPlusPlugin.FormatValueOffset(-12.5m));
+	}
+
 	[TestMethod]
 	public void TopLevelConfigIsFound() {
 		Dictionary<string, JsonElement> properties = ParseProperties("""{ "TradeManagerPlus": { "Enabled": false } }""");

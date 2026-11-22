@@ -1292,6 +1292,19 @@ public sealed class TradeMatcherTests {
 	);
 
 	[TestMethod]
+	public void CardEquivalentsCannotOverrideBuiltInTradingCardValues() {
+		AssertCompileFails(
+			"""{ "Type": "Accept", "CardEquivalents": [ { "Type": "TradingCard", "Cards": 5 } ] }""",
+			"cannot override the built-in one-card value"
+		);
+
+		AssertCompileFails(
+			"""{ "Type": "Accept", "CardEquivalents": [ { "Type": "FoilTradingCard", "Cards": 5 } ] }""",
+			"cannot override the built-in one-card value"
+		);
+	}
+
+	[TestMethod]
 	public void CardEquivalentWithoutASetSizeCannotBePricedPerSet() => AssertCompileFails(
 		"""
 		{
@@ -1364,6 +1377,12 @@ public sealed class TradeMatcherTests {
 	public void NonCommunityRarityNeedsTheCustomList() {
 		AssertCompileFails("""{ "Type": "Accept", "Conditions": { "TheirItems": { "Rarities": ["Ancient"] } } }""", "not a Steam Community item rarity");
 	}
+
+	[TestMethod]
+	public void UnknownIsNotAcceptedAsACustomRarity() => AssertCompileFails(
+		"""{ "Type": "Accept", "Conditions": { "TheirItems": { "CustomRarities": ["Unknown"] } } }""",
+		"'TheirItems[0].CustomRarities' contains unknown item rarity"
+	);
 
 	[TestMethod]
 	public void CustomRarityMatchesItemsFromOtherInventories() {
