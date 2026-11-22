@@ -18,6 +18,13 @@ public sealed class PluginConfigTests {
 	}
 
 	[TestMethod]
+	public void MinimumDecimalValueOffsetCanBeFormattedWithoutOverflow() {
+		Assert.AreEqual(" - 79228162514264337593543950335", TradeManagerPlusPlugin.FormatValueOffset(decimal.MinValue));
+		Assert.AreEqual(" + 12.5", TradeManagerPlusPlugin.FormatValueOffset(12.5m));
+		Assert.AreEqual(" - 12.5", TradeManagerPlusPlugin.FormatValueOffset(-12.5m));
+	}
+
+	[TestMethod]
 	public void TopLevelConfigIsFound() {
 		Dictionary<string, JsonElement> properties = ParseProperties("""{ "TradeManagerPlus": { "Enabled": false } }""");
 
