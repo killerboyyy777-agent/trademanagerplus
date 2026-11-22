@@ -1381,7 +1381,7 @@ public sealed class TradeMatcherTests {
 	[TestMethod]
 	public void UnknownIsNotAcceptedAsACustomRarity() => AssertCompileFails(
 		"""{ "Type": "Accept", "Conditions": { "TheirItems": { "CustomRarities": ["Unknown"] } } }""",
-		"'CustomRarities' contains unknown item rarity"
+		"'TheirItems[0].CustomRarities' contains unknown item rarity"
 	);
 
 	[TestMethod]
