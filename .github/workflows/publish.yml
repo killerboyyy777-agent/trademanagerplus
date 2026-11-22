@@ -23,7 +23,7 @@ jobs:
           asf_tag: 6.3.11.7
           asset_name: TradeManagerPlus.zip
         - asf: 7
-          asf_tag: 7.0.0.7
+          asf_tag: 7.0.0.9
           asset_name: TradeManagerPlus-V7.zip
 
     runs-on: ${{ matrix.os }}
@@ -52,8 +52,7 @@ jobs:
       if: matrix.asf == 7
       uses: actions/setup-dotnet@2016bd2012dba4e32de620c46fe006a3ac9f0602 # v5.0.1
       with:
-        dotnet-version: 11.0.100-rc.3.26522.148
-        dotnet-quality: preview
+        dotnet-version: 11.0.x
 
     - name: Verify .NET Core
       run: dotnet --info

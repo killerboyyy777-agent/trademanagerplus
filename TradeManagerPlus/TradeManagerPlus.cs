@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Composition;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -34,6 +35,7 @@ internal sealed class BotRuleSet {
 }
 
 #pragma warning disable CA1812 // ASF instantiates this class during runtime
+[Export(typeof(IPlugin))]
 [UsedImplicitly]
 #if ASF7
 internal sealed class TradeManagerPlusPlugin : IGitHubPluginUpdates, IBot, IBotCommand, IBotModules, IBotTradeOffer {

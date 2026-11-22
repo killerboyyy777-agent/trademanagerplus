@@ -387,6 +387,12 @@ internal static class RuleCompiler {
 					return false;
 				}
 
+				if (type is EAssetType.TradingCard or EAssetType.FoilTradingCard) {
+					error = $"'CardEquivalents' cannot override the built-in one-card value for '{type}'";
+
+					return false;
+				}
+
 				if (equivalent.Cards == 0) {
 					error = $"'CardEquivalents' contains a card count of 0 for '{equivalent.Type}'";
 
@@ -798,7 +804,7 @@ internal static class EnumNameParser {
 	internal static bool TryParseCustomRarity(string? value, out EAssetRarity result) {
 		result = default;
 
-		return TryParseAssetRarity(value, out result) && (result is not (EAssetRarity.Common or EAssetRarity.Uncommon or EAssetRarity.Rare));
+		return TryParseAssetRarity(value, out result) && (result is EAssetRarity.Mythical or EAssetRarity.Legendary or EAssetRarity.Ancient or EAssetRarity.Immortal or EAssetRarity.Arcana or EAssetRarity.Unusual);
 	}
 
 	internal static bool TryParseAssetType(string? value, out EAssetType result) => TryParse(value, out result);

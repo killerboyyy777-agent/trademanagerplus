@@ -1,12 +1,22 @@
 using System.Collections.Generic;
+using System.Composition;
 using System.Linq;
 using System.Text.Json;
+using ArchiSteamFarm.Plugins.Interfaces;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace TradeManagerPlus.Tests;
 
 [TestClass]
 public sealed class PluginConfigTests {
+	[TestMethod]
+	public void PluginIsExportedWithTheIPluginContract() {
+		ExportAttribute? export = typeof(TradeManagerPlusPlugin).GetCustomAttributes(typeof(ExportAttribute), inherit: false).OfType<ExportAttribute>().SingleOrDefault();
+
+		Assert.IsNotNull(export);
+		Assert.AreEqual(typeof(IPlugin), export!.ContractType);
+	}
+
 	[TestMethod]
 	public void TopLevelConfigIsFound() {
 		Dictionary<string, JsonElement> properties = ParseProperties("""{ "TradeManagerPlus": { "Enabled": false } }""");
