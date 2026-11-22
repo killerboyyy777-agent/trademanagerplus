@@ -3,8 +3,8 @@
 
 	<PropertyGroup>
 		<PluginName>TradeManagerPlus</PluginName>
-		<Version>1.1.0.2</Version>
-		<InformationalVersion>1.1.0.2</InformationalVersion>
+		<Version>1.1.0.3</Version>
+		<InformationalVersion>1.1.0.3</InformationalVersion>
 	</PropertyGroup>
 
 	<PropertyGroup>
